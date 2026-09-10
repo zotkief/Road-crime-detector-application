@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Local Android SDK configuration
+local.properties
+
+# Runtime / generated files
+runs/
+
+# SDK
+
+.sdk/

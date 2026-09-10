@@ -1,0 +1,3 @@
+/home/zotkief/github/Road-crime-detector-application/sdk/.cxx/RelWithDebInfo/51k6j1h7/x86_64/CMakeFiles/opencv_jni_shared.dir
+/home/zotkief/github/Road-crime-detector-application/sdk/.cxx/RelWithDebInfo/51k6j1h7/x86_64/CMakeFiles/edit_cache.dir
+/home/zotkief/github/Road-crime-detector-application/sdk/.cxx/RelWithDebInfo/51k6j1h7/x86_64/CMakeFiles/rebuild_cache.dir
