@@ -4,9 +4,16 @@ import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.processing.lanes.LineModel
 
-class ViolationDetector {
-    private val laneCrossingDetector = LaneCrossingDetector()
+class ViolationDetector(
+    private val rules: List<ViolationRule> = listOf(
+        LaneCrossingDetector()
+    )
+) {
 
-    fun detect(detections: List<Detection>, leftLane: LineModel?, rightLane: LineModel?): List<Violation> =
-        laneCrossingDetector.detect(detections, leftLane, rightLane)
+    fun detect(
+        detections: List<Detection>,
+        leftLane: LineModel?,
+        rightLane: LineModel?
+    ): List<Violation> =
+        rules.flatMap { rule -> rule.detect(detections, leftLane, rightLane) }
 }

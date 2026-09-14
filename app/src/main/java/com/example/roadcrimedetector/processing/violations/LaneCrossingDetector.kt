@@ -8,7 +8,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
-class LaneCrossingDetector {
+class LaneCrossingDetector : ViolationRule() {
     private enum class Lane { LEFT, RIGHT }
 
     private data class TrackState(
@@ -27,7 +27,11 @@ class LaneCrossingDetector {
     private var nextTrackId = 0
     private var frameNumber = 0L
 
-    fun detect(detections: List<Detection>, leftLane: LineModel?, rightLane: LineModel?): List<Violation> {
+    override fun detect(
+        detections: List<Detection>,
+        leftLane: LineModel?,
+        rightLane: LineModel?
+    ): List<Violation> {
         frameNumber++
         val matchedTracks = matchDetections(detections)
         val violations = mutableListOf<Violation>()
