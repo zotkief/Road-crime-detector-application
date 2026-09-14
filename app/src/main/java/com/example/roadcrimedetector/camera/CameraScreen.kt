@@ -2,6 +2,11 @@ package com.example.roadcrimedetector.camera
 
 import android.graphics.Bitmap
 import androidx.camera.core.*
+import androidx.camera.video.Quality
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -23,6 +28,7 @@ fun CameraScreen(targetFps: Int) {
     val cameraController = remember { CameraController(context) }
 
     val executor = remember { Executors.newSingleThreadExecutor() }
+    val recorder = remember { RollingVideoRecorder(context, executor) }
 
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var lastTime by remember { mutableStateOf(0L) }
@@ -31,6 +37,16 @@ fun CameraScreen(targetFps: Int) {
     LaunchedEffect(Unit) {
         val preview = Preview.Builder().build()
         val analysis = cameraController.createAnalysis()
+        val videoCapture = VideoCapture.withOutput(
+            Recorder.Builder()
+                .setQualitySelector(
+                    QualitySelector.from(
+                        Quality.HD,
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                    )
+                )
+                .build()
+        )
 
         analysis.setAnalyzer(executor) { image ->
 
@@ -46,7 +62,16 @@ fun CameraScreen(targetFps: Int) {
             image.close()
         }
 
-        cameraController.bind(lifecycleOwner, preview, analysis)
+        cameraController.bind(lifecycleOwner, preview, analysis, videoCapture)
+        recorder.start(videoCapture)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            recorder.close()
+            processor.close()
+            executor.shutdown()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

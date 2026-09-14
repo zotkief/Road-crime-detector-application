@@ -3,6 +3,7 @@ package com.example.roadcrimedetector.processing.violations
 import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.model.ViolationType
+import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.processing.lanes.LineModel
 import kotlin.math.abs
 import kotlin.math.max
@@ -30,7 +31,8 @@ class LaneCrossingDetector : ViolationRule() {
     override fun detect(
         detections: List<Detection>,
         leftLane: LineModel?,
-        rightLane: LineModel?
+        rightLane: LineModel?,
+        timestampMillis: Long
     ): List<Violation> {
         frameNumber++
         val matchedTracks = matchDetections(detections)
@@ -58,7 +60,9 @@ class LaneCrossingDetector : ViolationRule() {
                         violations += Violation(
                             detection = detection,
                             type = ViolationType.LANE_VIOLATION,
-                            description = "Przekroczenie ${laneDescription(lane)} linii ($direction)"
+                            description = "Przekroczenie ${laneDescription(lane)} linii ($direction)",
+                            timestampMillis = timestampMillis,
+                            position = VehiclePosition(track.x, track.y)
                         )
                         track.reported += lane
                         track.sides[lane] = side

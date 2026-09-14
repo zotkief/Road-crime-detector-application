@@ -40,19 +40,28 @@ class MainActivity : ComponentActivity() {
                     ContextCompat.checkSelfPermission(
                         this,
                         Manifest.permission.CAMERA
-                    ) == PackageManager.PERMISSION_GRANTED
+                    ) == PackageManager.PERMISSION_GRANTED &&
+                        ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
                 )
             }
 
             val launcher = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission()
-            ) {
-                permissionGranted = it
+                ActivityResultContracts.RequestMultiplePermissions()
+            ) { permissions ->
+                permissionGranted = permissions.values.all { it }
             }
 
             LaunchedEffect(Unit) {
                 if (!permissionGranted) {
-                    launcher.launch(Manifest.permission.CAMERA)
+                    launcher.launch(
+                        arrayOf(
+                            Manifest.permission.CAMERA,
+                            Manifest.permission.RECORD_AUDIO
+                        )
+                    )
                 }
             }
 

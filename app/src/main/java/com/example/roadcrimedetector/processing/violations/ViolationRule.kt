@@ -8,6 +8,7 @@ abstract class ViolationRule {
     abstract fun detect(
         detections: List<Detection>,
         leftLane: LineModel?,
-        rightLane: LineModel?
+        rightLane: LineModel?,
+        timestampMillis: Long
     ): List<Violation>
 }
