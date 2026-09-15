@@ -44,7 +44,11 @@ class MainActivity : ComponentActivity() {
                         ContextCompat.checkSelfPermission(
                             this,
                             Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
+                            ) == PackageManager.PERMISSION_GRANTED &&
+                            ContextCompat.checkSelfPermission(
+                                this,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
                 )
             }
 
@@ -59,7 +63,9 @@ class MainActivity : ComponentActivity() {
                     launcher.launch(
                         arrayOf(
                             Manifest.permission.CAMERA,
-                            Manifest.permission.RECORD_AUDIO
+                            Manifest.permission.RECORD_AUDIO,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                            Manifest.permission.ACCESS_FINE_LOCATION
                         )
                     )
                 }

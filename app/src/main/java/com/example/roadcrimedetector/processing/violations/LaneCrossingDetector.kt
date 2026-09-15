@@ -62,7 +62,12 @@ class LaneCrossingDetector : ViolationRule() {
                             type = ViolationType.LANE_VIOLATION,
                             description = "Przekroczenie ${laneDescription(lane)} linii ($direction)",
                             timestampMillis = timestampMillis,
-                            position = VehiclePosition(track.x, track.y)
+                            position = VehiclePosition(
+                                x1 = detection.box[0],
+                                y1 = detection.box[1],
+                                x2 = detection.box[2],
+                                y2 = detection.box[3]
+                            )
                         )
                         track.reported += lane
                         track.sides[lane] = side

@@ -15,6 +15,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.example.roadcrimedetector.processing.FrameProcessor
+import com.example.roadcrimedetector.location.LocationProvider
+import com.example.roadcrimedetector.storage.IncidentRepository
 import com.example.roadcrimedetector.utils.toBitmapRGBA
 import java.util.concurrent.Executors
 
@@ -29,6 +31,8 @@ fun CameraScreen(targetFps: Int) {
 
     val executor = remember { Executors.newSingleThreadExecutor() }
     val recorder = remember { RollingVideoRecorder(context, executor) }
+    val incidentRepository = remember { IncidentRepository(context) }
+    val locationProvider = remember { LocationProvider(context) }
 
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var lastTime by remember { mutableStateOf(0L) }
@@ -56,6 +60,15 @@ fun CameraScreen(targetFps: Int) {
 
                 val bitmap = image.toBitmapRGBA()
                 val processedFrame = processor.process(bitmap)
+                processedFrame.violations.forEach { violation ->
+                    val incident = incidentRepository.save(
+                        violation,
+                        locationProvider.lastKnownLocation()
+                    )
+                    recorder.captureIncident(incident.id) { videoFiles ->
+                        incidentRepository.attachVideos(incident.id, videoFiles)
+                    }
+                }
                 processedBitmap = processedFrame.bitmap
             }
 

@@ -10,6 +10,7 @@ import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import java.io.File
 import java.util.concurrent.Executor
+import kotlin.math.max
 
 class RollingVideoRecorder(
     private val context: Context,
@@ -17,6 +18,8 @@ class RollingVideoRecorder(
 ) : AutoCloseable {
     private val handler = Handler(Looper.getMainLooper())
     private val segments = ArrayDeque<File>()
+    private val activeIncidents = mutableMapOf<String, Long>()
+    private val rollingDirectory = File(context.filesDir, "rolling-video").apply { mkdirs() }
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var running = false
@@ -34,13 +37,31 @@ class RollingVideoRecorder(
         segments.filter { it.exists() }
     }
 
+    fun captureIncident(incidentId: String, onReady: (List<File>) -> Unit) {
+        synchronized(this) {
+            if (!running) {
+                onReady(emptyList())
+                return
+            }
+            val startedAt = System.currentTimeMillis()
+            activeIncidents[incidentId] = startedAt
+            handler.postDelayed({
+                val files = synchronized(this) {
+                    val incidentFiles = copyIncidentSegments(incidentId, startedAt)
+                    activeIncidents.remove(incidentId)
+                    cleanupSegments()
+                    incidentFiles
+                }
+                onReady(files)
+            }, FORWARD_VIDEO_DURATION_MILLIS)
+        }
+    }
+
     private fun startSegment() {
         val capture = videoCapture ?: return
-        val file = File(context.cacheDir, "rolling_${System.currentTimeMillis()}.mp4")
+        val file = File(rollingDirectory, "rolling_${System.currentTimeMillis()}.mp4")
         segments.addLast(file)
-        while (segments.size > MAX_SEGMENTS) {
-            segments.removeFirst().delete()
-        }
+        cleanupSegments()
 
         recording = capture.output
             .prepareRecording(context, FileOutputOptions.Builder(file).build())
@@ -73,8 +94,41 @@ class RollingVideoRecorder(
         }
     }
 
+    private fun cleanupSegments() {
+        val oldestRequired = activeIncidents.values.minOrNull()?.minus(BACK_VIDEO_DURATION_MILLIS)
+        while (segments.size > MAX_SEGMENTS) {
+            val oldest = segments.firstOrNull() ?: break
+            val timestamp = segmentTimestamp(oldest)
+            if (oldestRequired != null && timestamp >= oldestRequired) break
+            segments.removeFirst().delete()
+        }
+    }
+
+    private fun copyIncidentSegments(incidentId: String, startedAt: Long): List<File> {
+        val destinationDirectory = File(context.filesDir, "incidents/$incidentId/video").apply { mkdirs() }
+        val oldestAllowed = startedAt - BACK_VIDEO_DURATION_MILLIS
+        val newestAllowed = startedAt + FORWARD_VIDEO_DURATION_MILLIS
+        return rollingDirectory.listFiles()
+            ?.filter { file ->
+                val timestamp = segmentTimestamp(file)
+                timestamp in oldestAllowed..newestAllowed
+            }
+            ?.sortedBy(::segmentTimestamp)
+            ?.map { source ->
+                val destination = File(destinationDirectory, source.name)
+                source.copyTo(destination, overwrite = true)
+                destination
+            }
+            ?: emptyList()
+    }
+
+    private fun segmentTimestamp(file: File): Long =
+        file.name.removePrefix("rolling_").removeSuffix(".mp4").toLongOrNull() ?: Long.MAX_VALUE
+
     companion object {
         private const val SEGMENT_DURATION_MILLIS = 5_000L
         private const val MAX_SEGMENTS = 6
+        private const val BACK_VIDEO_DURATION_MILLIS = 30_000L
+        private const val FORWARD_VIDEO_DURATION_MILLIS = 30_000L
     }
 }
