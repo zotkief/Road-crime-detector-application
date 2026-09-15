@@ -44,10 +44,6 @@ class MainActivity : ComponentActivity() {
                         ContextCompat.checkSelfPermission(
                             this,
                             Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED &&
-                            ContextCompat.checkSelfPermission(
-                                this,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
                             ) == PackageManager.PERMISSION_GRANTED
                 )
             }
@@ -55,7 +51,8 @@ class MainActivity : ComponentActivity() {
             val launcher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestMultiplePermissions()
             ) { permissions ->
-                permissionGranted = permissions.values.all { it }
+                permissionGranted = permissions[Manifest.permission.CAMERA] == true &&
+                    permissions[Manifest.permission.RECORD_AUDIO] == true
             }
 
             LaunchedEffect(Unit) {

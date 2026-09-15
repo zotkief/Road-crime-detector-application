@@ -1,6 +1,7 @@
 package com.example.roadcrimedetector.storage
 
 import android.content.Context
+import android.graphics.Bitmap
 import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Incident
 import com.example.roadcrimedetector.model.LocationSnapshot
@@ -16,12 +17,24 @@ class IncidentRepository(context: Context) {
     private val metadataFile = File(root, "incidents.json")
 
     @Synchronized
-    fun save(violation: Violation, location: LocationSnapshot?): Incident {
+    fun save(
+        violation: Violation,
+        location: LocationSnapshot?,
+        snapshot: Bitmap? = null
+    ): Incident {
+        val id = java.util.UUID.randomUUID().toString()
+        val snapshotFile = snapshot?.let {
+            File(root, "$id/snapshot.png").apply {
+                parentFile?.mkdirs()
+                outputStream().use { output -> it.compress(Bitmap.CompressFormat.PNG, 100, output) }
+            }
+        }
         val incident = Incident(
-            id = java.util.UUID.randomUUID().toString(),
+            id = id,
             violation = violation,
             location = location,
-            recordedAtMillis = System.currentTimeMillis()
+            recordedAtMillis = System.currentTimeMillis(),
+            snapshotFile = snapshotFile?.absolutePath
         )
         val incidents = readAll().toMutableList()
         incidents += incident
@@ -57,6 +70,7 @@ class IncidentRepository(context: Context) {
     private fun toJson(incident: Incident) = JSONObject().apply {
         put("id", incident.id)
         put("recordedAtMillis", incident.recordedAtMillis)
+        incident.snapshotFile?.let { put("snapshotFile", it) }
         put("violation", JSONObject().apply {
             put("label", incident.violation.detection.label)
             put("confidence", incident.violation.detection.confidence)
@@ -127,6 +141,7 @@ class IncidentRepository(context: Context) {
             violation = violation,
             location = location,
             recordedAtMillis = json.optLong("recordedAtMillis", violation.timestampMillis),
+            snapshotFile = json.optString("snapshotFile").takeUnless(String::isEmpty),
             videoFiles = videos
         )
     }

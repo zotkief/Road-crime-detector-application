@@ -5,6 +5,7 @@ data class Incident(
     val violation: Violation,
     val location: LocationSnapshot?,
     val recordedAtMillis: Long,
+    val snapshotFile: String? = null,
     val videoFiles: List<String> = emptyList()
 )
 
