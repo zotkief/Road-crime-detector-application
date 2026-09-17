@@ -1,12 +1,33 @@
 package com.example.roadcrimedetector.model
 
-data class Violation(
+abstract class Violation(
     val detection: Detection,
-    val type: ViolationType,
     val description: String,
     val timestampMillis: Long,
     val position: VehiclePosition
-)
+) {
+    abstract fun violationType(): ViolationType
+
+    fun generateEmail(roadName: String): String = "email_$roadName"
+}
+
+class LaneCrossingViolation(
+    detection: Detection,
+    description: String,
+    timestampMillis: Long,
+    position: VehiclePosition
+) : Violation(detection, description, timestampMillis, position) {
+    override fun violationType(): ViolationType = ViolationType.LANE_VIOLATION
+}
+
+internal class StoredOtherViolation(
+    detection: Detection,
+    description: String,
+    timestampMillis: Long,
+    position: VehiclePosition
+) : Violation(detection, description, timestampMillis, position) {
+    override fun violationType(): ViolationType = ViolationType.OTHER
+}
 
 data class VehiclePosition(
     val x1: Float,

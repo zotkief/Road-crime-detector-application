@@ -4,7 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Incident
+import com.example.roadcrimedetector.model.LaneCrossingViolation
 import com.example.roadcrimedetector.model.LocationSnapshot
+import com.example.roadcrimedetector.model.StoredOtherViolation
 import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.model.ViolationType
@@ -55,6 +57,18 @@ class IncidentRepository(context: Context) {
     }
 
     @Synchronized
+    fun updateDetails(incidentId: String, emailContent: String, roadName: String) {
+        val incidents = readAll().map { incident ->
+            if (incident.id == incidentId) {
+                incident.copy(emailContent = emailContent, roadName = roadName)
+            } else {
+                incident
+            }
+        }
+        writeAll(incidents)
+    }
+
+    @Synchronized
     fun readAll(): List<Incident> {
         if (!metadataFile.exists()) return emptyList()
         val json = JSONArray(metadataFile.readText())
@@ -76,7 +90,7 @@ class IncidentRepository(context: Context) {
             put("confidence", incident.violation.detection.confidence)
             put("classId", incident.violation.detection.classId)
             put("box", JSONArray(incident.violation.detection.box.toList()))
-            put("type", incident.violation.type.name)
+            put("type", incident.violation.violationType().name)
             put("description", incident.violation.description)
             put("timestampMillis", incident.violation.timestampMillis)
             put("position", JSONObject().apply {
@@ -97,6 +111,8 @@ class IncidentRepository(context: Context) {
             })
         }
         put("videoFiles", JSONArray(incident.videoFiles))
+        put("emailContent", incident.emailContent)
+        put("roadName", incident.roadName)
     }
 
     private fun fromJson(json: JSONObject): Incident {
@@ -110,18 +126,29 @@ class IncidentRepository(context: Context) {
             box = box,
             classId = violationJson.getInt("classId")
         )
-        val violation = Violation(
-            detection = detection,
-            type = ViolationType.valueOf(violationJson.getString("type")),
-            description = violationJson.getString("description"),
-            timestampMillis = violationJson.getLong("timestampMillis"),
-            position = VehiclePosition(
-                positionJson.getDouble("x1").toFloat(),
-                positionJson.getDouble("y1").toFloat(),
-                positionJson.getDouble("x2").toFloat(),
-                positionJson.getDouble("y2").toFloat()
-            )
+        val description = violationJson.getString("description")
+        val timestampMillis = violationJson.getLong("timestampMillis")
+        val position = VehiclePosition(
+            positionJson.getDouble("x1").toFloat(),
+            positionJson.getDouble("y1").toFloat(),
+            positionJson.getDouble("x2").toFloat(),
+            positionJson.getDouble("y2").toFloat()
         )
+        val violationType = ViolationType.valueOf(violationJson.getString("type"))
+        val violation = when (violationType) {
+            ViolationType.LANE_VIOLATION -> LaneCrossingViolation(
+                detection,
+                description,
+                timestampMillis,
+                position
+            )
+            ViolationType.OTHER -> StoredOtherViolation(
+                detection,
+                description,
+                timestampMillis,
+                position
+            )
+        }
         val locationJson = json.optJSONObject("location")
         val location = locationJson?.let {
             LocationSnapshot(
@@ -142,7 +169,9 @@ class IncidentRepository(context: Context) {
             location = location,
             recordedAtMillis = json.optLong("recordedAtMillis", violation.timestampMillis),
             snapshotFile = json.optString("snapshotFile").takeUnless(String::isEmpty),
-            videoFiles = videos
+            videoFiles = videos,
+            emailContent = json.optString("emailContent"),
+            roadName = json.optString("roadName")
         )
     }
 }

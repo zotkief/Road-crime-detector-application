@@ -6,7 +6,9 @@ data class Incident(
     val location: LocationSnapshot?,
     val recordedAtMillis: Long,
     val snapshotFile: String? = null,
-    val videoFiles: List<String> = emptyList()
+    val videoFiles: List<String> = emptyList(),
+    val emailContent: String = "",
+    val roadName: String = ""
 )
 
 data class LocationSnapshot(

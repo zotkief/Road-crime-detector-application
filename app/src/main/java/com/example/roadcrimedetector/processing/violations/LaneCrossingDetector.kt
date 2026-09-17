@@ -1,8 +1,8 @@
 package com.example.roadcrimedetector.processing.violations
 
 import com.example.roadcrimedetector.model.Detection
+import com.example.roadcrimedetector.model.LaneCrossingViolation
 import com.example.roadcrimedetector.model.Violation
-import com.example.roadcrimedetector.model.ViolationType
 import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.processing.lanes.LineModel
 import kotlin.math.abs
@@ -57,9 +57,8 @@ class LaneCrossingDetector : ViolationRule() {
                     track.pendingFrames[lane] = pendingFrames
                     if (pendingFrames >= CROSSING_CONFIRMATION_FRAMES && lane !in track.reported) {
                         val direction = if (previousSide < side) "A -> B" else "B -> A"
-                        violations += Violation(
+                        violations += LaneCrossingViolation(
                             detection = detection,
-                            type = ViolationType.LANE_VIOLATION,
                             description = "Przekroczenie ${laneDescription(lane)} linii ($direction)",
                             timestampMillis = timestampMillis,
                             position = VehiclePosition(

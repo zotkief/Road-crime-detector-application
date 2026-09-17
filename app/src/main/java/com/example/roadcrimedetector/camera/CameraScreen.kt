@@ -45,6 +45,7 @@ fun CameraScreen(targetFps: Int) {
 
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showIncidents by remember { mutableStateOf(false) }
+    var selectedIncident by remember { mutableStateOf<com.example.roadcrimedetector.model.Incident?>(null) }
     var incidents by remember { mutableStateOf(incidentRepository.readAll().reversed()) }
     var analysisUseCase by remember { mutableStateOf<ImageAnalysis?>(null) }
     var lastTime by remember { mutableStateOf(0L) }
@@ -81,6 +82,7 @@ fun CameraScreen(targetFps: Int) {
                     )
                     recorder.captureIncident(incident.id) { videoFiles ->
                         incidentRepository.attachVideos(incident.id, videoFiles)
+                        incidents = incidentRepository.readAll().reversed()
                     }
                 }
                 processedBitmap = processedFrame.bitmap
@@ -102,7 +104,26 @@ fun CameraScreen(targetFps: Int) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (showIncidents) {
+        if (selectedIncident != null) {
+            IncidentDetailsScreen(
+                incident = selectedIncident!!,
+                onBack = {
+                    selectedIncident = null
+                    incidents = incidentRepository.readAll().reversed()
+                },
+                onDetailsChanged = { emailContent, roadName ->
+                    incidentRepository.updateDetails(
+                        selectedIncident!!.id,
+                        emailContent,
+                        roadName
+                    )
+                    selectedIncident = selectedIncident!!.copy(
+                        emailContent = emailContent,
+                        roadName = roadName
+                    )
+                }
+            )
+        } else if (showIncidents) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Button(onClick = {
                     showIncidents = false
@@ -115,7 +136,7 @@ fun CameraScreen(targetFps: Int) {
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(incidents, key = { it.id }) { incident ->
-                        IncidentCard(incident)
+                        IncidentCard(incident) { selectedIncident = incident }
                     }
                 }
             }
@@ -142,11 +163,14 @@ fun CameraScreen(targetFps: Int) {
 }
 
 @Composable
-private fun IncidentCard(incident: com.example.roadcrimedetector.model.Incident) {
+private fun IncidentCard(
+    incident: com.example.roadcrimedetector.model.Incident,
+    onClick: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { },
+            .clickable(onClick = onClick),
         elevation = 4.dp
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -162,7 +186,7 @@ private fun IncidentCard(incident: com.example.roadcrimedetector.model.Incident)
                     )
                 }
             }
-            Text("Typ: ${incident.violation.type}")
+            Text("Typ: ${incident.violation.violationType()}")
             Text(incident.violation.description)
         }
     }
