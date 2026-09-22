@@ -19,3 +19,18 @@ data class LocationSnapshot(
     val provider: String?,
     val locationTimeMillis: Long
 )
+
+data class LocationAddress(
+    val state: String,
+    val road: String,
+    val city: String?
+)
+
+data class PersonalData(
+    val firstName: String = "",
+    val lastName: String = "",
+    val homeAddress: String = ""
+) {
+    val isComplete: Boolean
+        get() = firstName.isNotBlank() && lastName.isNotBlank() && homeAddress.isNotBlank()
+}

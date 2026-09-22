@@ -15,7 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.Button
 import androidx.compose.material.Card
+import androidx.compose.material.IconButton
 import androidx.compose.material.Text
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.example.roadcrimedetector.processing.FrameProcessor
 import com.example.roadcrimedetector.location.LocationProvider
 import com.example.roadcrimedetector.storage.IncidentRepository
+import com.example.roadcrimedetector.storage.PersonalDataRepository
 import com.example.roadcrimedetector.utils.toBitmapRGBA
 import java.util.concurrent.Executors
 
@@ -41,10 +44,13 @@ fun CameraScreen(targetFps: Int) {
     val executor = remember { Executors.newSingleThreadExecutor() }
     val recorder = remember { RollingVideoRecorder(context, executor) }
     val incidentRepository = remember { IncidentRepository(context) }
+    val personalDataRepository = remember { PersonalDataRepository(context) }
     val locationProvider = remember { LocationProvider(context) }
 
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showIncidents by remember { mutableStateOf(false) }
+    var showPersonalData by remember { mutableStateOf(false) }
+    var personalData by remember { mutableStateOf(personalDataRepository.load()) }
     var selectedIncident by remember { mutableStateOf<com.example.roadcrimedetector.model.Incident?>(null) }
     var incidents by remember { mutableStateOf(incidentRepository.readAll().reversed()) }
     var analysisUseCase by remember { mutableStateOf<ImageAnalysis?>(null) }
@@ -104,7 +110,17 @@ fun CameraScreen(targetFps: Int) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (selectedIncident != null) {
+        if (showPersonalData) {
+            PersonalDataScreen(
+                initialData = personalData,
+                onBack = { showPersonalData = false },
+                onSave = { updatedData ->
+                    personalDataRepository.save(updatedData)
+                    personalData = updatedData
+                    showPersonalData = false
+                }
+            )
+        } else if (selectedIncident != null) {
             IncidentDetailsScreen(
                 incident = selectedIncident!!,
                 onBack = {
@@ -148,15 +164,32 @@ fun CameraScreen(targetFps: Int) {
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            Button(
-                onClick = {
-                    analysisUseCase?.clearAnalyzer()
-                    incidents = incidentRepository.readAll().reversed()
-                    showIncidents = true
-                },
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text("Zatrzymaj analizę i pokaż zdarzenia")
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    IconButton(
+                        onClick = { showPersonalData = true }
+                    ) {
+                        Text(
+                            text = "!",
+                            color = if (personalData.isComplete) Color.DarkGray else Color.Red
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        analysisUseCase?.clearAnalyzer()
+                        incidents = incidentRepository.readAll().reversed()
+                        showIncidents = true
+                    },
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text("Zatrzymaj analizę i pokaż zdarzenia")
+                }
             }
         }
     }
