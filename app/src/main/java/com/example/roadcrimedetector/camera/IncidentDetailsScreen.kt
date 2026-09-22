@@ -1,7 +1,10 @@
 package com.example.roadcrimedetector.camera
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.widget.VideoView
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,13 +26,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.roadcrimedetector.model.Incident
+import com.example.roadcrimedetector.location.NominatimGeocoder
+import com.example.roadcrimedetector.utils.getEmailForVoivodeship
+import com.example.roadcrimedetector.utils.mergeVideosIntoSingleFile
+import androidx.core.content.FileProvider
 import java.io.File
+import kotlinx.coroutines.launch
 
 @Composable
 fun IncidentDetailsScreen(
@@ -39,6 +48,18 @@ fun IncidentDetailsScreen(
 ) {
     var emailContent by rememberSaveable(incident.id) { mutableStateOf(incident.emailContent) }
     var roadName by rememberSaveable(incident.id) { mutableStateOf(incident.roadName) }
+    var voivodeship by remember(incident.id) { mutableStateOf("") }
+    var isPreparingEmail by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(incident.id) {
+        val address = incident.location?.let {
+            NominatimGeocoder().findAddress(it.latitude, it.longitude)
+        }
+        voivodeship = address?.state.orEmpty()
+        emailContent = incident.violation.generateEmail(incident.location)
+    }
 
     Column(
         modifier = Modifier
@@ -50,6 +71,43 @@ fun IncidentDetailsScreen(
         Button(onClick = onBack) {
             Text("Wróć do wykroczeń")
         }
+        Button(
+            enabled = !isPreparingEmail,
+            onClick = {
+                coroutineScope.launch {
+                    isPreparingEmail = true
+                    val mergedVideo = mergeVideosIntoSingleFile(
+                        videoFiles = incident.videoFiles.map(::File),
+                        outputFile = File(context.cacheDir, "incident_${incident.id}.mp4")
+                    )
+                    if (mergedVideo == null) {
+                        Toast.makeText(context, "Brak nagrania wideo", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val shareUri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            mergedVideo
+                        )
+                        val emailIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "video/mp4"
+                            putExtra(Intent.EXTRA_EMAIL, arrayOf(getEmailForVoivodeship(voivodeship)))
+                            putExtra(Intent.EXTRA_SUBJECT, "Testowe zgłoszenie zdarzenia drogowego")
+                            putExtra(Intent.EXTRA_TEXT, emailContent)
+                            putExtra(Intent.EXTRA_STREAM, shareUri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        try {
+                            context.startActivity(Intent.createChooser(emailIntent, "Wyślij email"))
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(context, "Brak aplikacji do wysyłania emaili", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    isPreparingEmail = false
+                }
+            }
+        ) {
+            Text(if (isPreparingEmail) "Przygotowywanie..." else "Akceptuj i wyślij email")
+        }
         Text("Szczegóły wykroczenia")
         Text("Typ: ${incident.violation.violationType()}")
         Text(incident.violation.description)
@@ -57,7 +115,7 @@ fun IncidentDetailsScreen(
         Text("Pewność: ${incident.violation.detection.confidence}")
         Text("ID klasy: ${incident.violation.detection.classId}")
         Text("Czas nagrania: ${incident.recordedAtMillis}")
-        Text("Czas wykrycia: ${incident.violation.timestampMillis}")
+        Text("Czas wykrycia: ${incident.violation.eventTimestampPolish}")
         Text(
             "Pozycja pojazdu: " +
                 "(${incident.violation.position.x1}, ${incident.violation.position.y1}) - " +
