@@ -10,6 +10,8 @@ import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import java.io.File
 import java.util.concurrent.Executor
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.max
 
 class RollingVideoRecorder(
@@ -17,12 +19,21 @@ class RollingVideoRecorder(
     private val executor: Executor
 ) : AutoCloseable {
     private val handler = Handler(Looper.getMainLooper())
-    private val segments = ArrayDeque<File>()
-    private val activeIncidents = mutableMapOf<String, Long>()
     private val rollingDirectory = File(context.filesDir, "rolling-video").apply { mkdirs() }
+    private val segments = ArrayDeque(
+        rollingDirectory.listFiles()
+            ?.filter(File::isFile)
+            ?.sortedBy(::segmentTimestamp)
+            .orEmpty()
+    )
+    private val activeIncidents = mutableMapOf<String, Long>()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
+    private var activeSegment: File? = null
+    private var pendingSnapshot: ((List<File>) -> Unit)? = null
     private var running = false
+
+    private val rotateRunnable = Runnable { rotateSegment() }
 
     fun start(videoCapture: VideoCapture<Recorder>) {
         synchronized(this) {
@@ -34,7 +45,24 @@ class RollingVideoRecorder(
     }
 
     fun storedSegments(): List<File> = synchronized(this) {
-        segments.filter { it.exists() }
+        segments.filter { it.exists() && it != activeSegment }
+    }
+
+    suspend fun snapshotStoredSegments(): List<File> = suspendCancellableCoroutine { continuation ->
+        synchronized(this) {
+            if (activeSegment == null) {
+                continuation.resume(storedSegments())
+            } else {
+                pendingSnapshot = { files ->
+                    if (continuation.isActive) continuation.resume(files)
+                }
+                handler.removeCallbacks(rotateRunnable)
+                recording?.let {
+                    recording = null
+                    it.stop()
+                }
+            }
+        }
     }
 
     fun captureIncident(incidentId: String, onReady: (List<File>) -> Unit) {
@@ -62,6 +90,7 @@ class RollingVideoRecorder(
         val file = File(rollingDirectory, "rolling_${System.currentTimeMillis()}.mp4")
         segments.addLast(file)
         cleanupSegments()
+        activeSegment = file
 
         recording = capture.output
             .prepareRecording(context, FileOutputOptions.Builder(file).build())
@@ -69,11 +98,16 @@ class RollingVideoRecorder(
             .start(executor) { event ->
                 if (event is VideoRecordEvent.Finalize) {
                     synchronized(this) {
+                        activeSegment = null
                         if (running) startSegment()
+                        val snapshotCallback = pendingSnapshot
+                        pendingSnapshot = null
+                        snapshotCallback?.invoke(storedSegments())
                     }
                 }
             }
-        handler.postDelayed({ rotateSegment() }, SEGMENT_DURATION_MILLIS)
+        handler.removeCallbacks(rotateRunnable)
+        handler.postDelayed(rotateRunnable, SEGMENT_DURATION_MILLIS)
     }
 
     private fun rotateSegment() {
@@ -95,11 +129,12 @@ class RollingVideoRecorder(
     }
 
     private fun cleanupSegments() {
+        val rollingCutoff = System.currentTimeMillis() - ROLLING_VIDEO_DURATION_MILLIS
         val oldestRequired = activeIncidents.values.minOrNull()?.minus(BACK_VIDEO_DURATION_MILLIS)
-        while (segments.size > MAX_SEGMENTS) {
+        while (segments.isNotEmpty()) {
             val oldest = segments.firstOrNull() ?: break
             val timestamp = segmentTimestamp(oldest)
-            if (oldestRequired != null && timestamp >= oldestRequired) break
+            if (timestamp >= rollingCutoff || (oldestRequired != null && timestamp >= oldestRequired)) break
             segments.removeFirst().delete()
         }
     }
@@ -127,7 +162,7 @@ class RollingVideoRecorder(
 
     companion object {
         private const val SEGMENT_DURATION_MILLIS = 5_000L
-        private const val MAX_SEGMENTS = 6
+        private const val ROLLING_VIDEO_DURATION_MILLIS = 60 * 60 * 1_000L
         private const val BACK_VIDEO_DURATION_MILLIS = 30_000L
         private const val FORWARD_VIDEO_DURATION_MILLIS = 30_000L
     }
