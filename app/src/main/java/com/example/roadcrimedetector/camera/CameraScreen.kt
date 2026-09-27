@@ -8,6 +8,8 @@ import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
 import androidx.camera.video.VideoCapture
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,6 +21,7 @@ import androidx.compose.material.IconButton
 import androidx.compose.material.Text
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -29,7 +32,13 @@ import com.example.roadcrimedetector.processing.FrameProcessor
 import com.example.roadcrimedetector.location.LocationProvider
 import com.example.roadcrimedetector.storage.IncidentRepository
 import com.example.roadcrimedetector.storage.PersonalDataRepository
+import com.example.roadcrimedetector.utils.mergeVideosIntoSingleFile
 import com.example.roadcrimedetector.utils.toBitmapRGBA
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.widget.Toast
+import java.io.File
 import java.util.concurrent.Executors
 
 @Composable
@@ -50,12 +59,46 @@ fun CameraScreen(targetFps: Int) {
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showIncidents by remember { mutableStateOf(false) }
     var showPersonalData by remember { mutableStateOf(false) }
+    var isExportingVideo by remember { mutableStateOf(false) }
     var personalData by remember { mutableStateOf(personalDataRepository.load()) }
     var selectedIncident by remember { mutableStateOf<com.example.roadcrimedetector.model.Incident?>(null) }
     var incidents by remember { mutableStateOf(incidentRepository.readAll().reversed()) }
     var analysisUseCase by remember { mutableStateOf<ImageAnalysis?>(null) }
     var lastTime by remember { mutableStateOf(0L) }
     val frameInterval = 1000L / targetFps
+    val coroutineScope = rememberCoroutineScope()
+    val exportVideoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("video/mp4")
+    ) { destination ->
+        if (destination == null) {
+            isExportingVideo = false
+        } else {
+            coroutineScope.launch {
+                val mergedFile = File(context.cacheDir, "last_hour_${System.currentTimeMillis()}.mp4")
+                try {
+                    val segments = recorder.snapshotStoredSegments()
+                    val mergedVideo = mergeVideosIntoSingleFile(segments, mergedFile)
+                    if (mergedVideo == null) {
+                        Toast.makeText(context, "Brak zapisanego wideo", Toast.LENGTH_SHORT).show()
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            val output = context.contentResolver.openOutputStream(destination)
+                                ?: error("Nie można otworzyć pliku docelowego")
+                            output.use { stream ->
+                                mergedVideo.inputStream().use { input -> input.copyTo(stream) }
+                            }
+                        }
+                        Toast.makeText(context, "Wideo zapisane", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Nie udało się zapisać wideo", Toast.LENGTH_SHORT).show()
+                } finally {
+                    mergedFile.delete()
+                    isExportingVideo = false
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         val preview = Preview.Builder().build()
@@ -189,6 +232,16 @@ fun CameraScreen(targetFps: Int) {
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text("Zatrzymaj analizę i pokaż zdarzenia")
+                }
+                Button(
+                    enabled = !isExportingVideo,
+                    onClick = {
+                        isExportingVideo = true
+                        exportVideoLauncher.launch("road-crime-last-hour.mp4")
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                ) {
+                    Text(if (isExportingVideo) "Przygotowywanie wideo..." else "Pobierz ostatnią godzinę")
                 }
             }
         }
