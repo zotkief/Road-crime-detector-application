@@ -43,8 +43,8 @@ class LaneCrossingDetector : ViolationRule() {
             val track = tracks.getValue(trackId)
             val lines = listOf(Lane.LEFT to leftLane, Lane.RIGHT to rightLane)
             for ((lane, line) in lines) {
-                if (line == null || !isWithinSegment(track.x, track.y, line)) continue
-                val distance = signedDistance(track.x, track.y, line)
+                if (line == null) continue
+                val distance = signedDistance(track.x, track.y, line) ?: continue
                 val side = classifySide(distance, track.sides[lane])
                 val previousSide = track.sides[lane]
                 if (side != 0 && previousSide != null && previousSide != 0 && side != previousSide) {
@@ -136,21 +136,33 @@ class LaneCrossingDetector : ViolationRule() {
         return matches
     }
 
-    private fun signedDistance(x: Float, y: Float, line: LineModel): Float = y - (line.m * x + line.b)
+    private fun signedDistance(x: Float, y: Float, line: LineModel): Float? {
+        var closestDistance: Float? = null
+        var closestMagnitude = Float.POSITIVE_INFINITY
+        for (segment in line.segments) {
+            val dx = segment.end.x - segment.start.x
+            val dy = segment.end.y - segment.start.y
+            val lengthSquared = dx * dx + dy * dy
+            if (lengthSquared == 0f) continue
+
+            val projection = ((x - segment.start.x) * dx + (y - segment.start.y) * dy) / lengthSquared
+            if (projection !in -SEGMENT_MARGIN..(1f + SEGMENT_MARGIN)) continue
+
+            val orientation = if (segment.start.y <= segment.end.y) 1f else -1f
+            val distance = orientation * (dx * (y - segment.start.y) - dy * (x - segment.start.x)) /
+                sqrt(lengthSquared)
+            if (abs(distance) < closestMagnitude) {
+                closestDistance = distance
+                closestMagnitude = abs(distance)
+            }
+        }
+        return closestDistance
+    }
 
     private fun classifySide(distance: Float, previousSide: Int?): Int = when {
         distance < -DISTANCE_HYSTERESIS -> -1
         distance > DISTANCE_HYSTERESIS -> 1
         else -> previousSide ?: 0
-    }
-
-    private fun isWithinSegment(x: Float, y: Float, line: LineModel): Boolean {
-        val dx = line.x2 - line.x1
-        val dy = line.y2 - line.y1
-        val lengthSquared = dx * dx + dy * dy
-        if (lengthSquared == 0f) return false
-        val projection = ((x - line.x1) * dx + (y - line.y1) * dy) / lengthSquared
-        return projection in -SEGMENT_MARGIN..(1f + SEGMENT_MARGIN)
     }
 
     private fun laneDescription(lane: Lane): String = when (lane) {

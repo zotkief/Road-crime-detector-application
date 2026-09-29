@@ -22,7 +22,15 @@ class FrameRenderer {
                 LineType.DASHED -> Scalar(255.0, 0.0, 0.0)
                 LineType.UNKNOWN -> Scalar(128.0, 128.0, 128.0)
             }
-            Imgproc.line(mat, Point(line.x1.toDouble(), line.y1.toDouble()), Point(line.x2.toDouble(), line.y2.toDouble()), color, 3)
+            for (segment in line.segments) {
+                Imgproc.line(
+                    mat,
+                    Point(segment.start.x.toDouble(), segment.start.y.toDouble()),
+                    Point(segment.end.x.toDouble(), segment.end.y.toDouble()),
+                    color,
+                    3
+                )
+            }
         }
     }
 }
