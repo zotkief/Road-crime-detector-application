@@ -4,39 +4,35 @@ import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 
 object LanePreprocessor {
-    fun preprocess(frame: Mat): Mat {
-        val hls = Mat()
-        Imgproc.cvtColor(frame, hls, Imgproc.COLOR_BGR2HLS)
+    fun createWhiteMask(frame: Mat): Mat {
+        val hsv = Mat()
+        Imgproc.cvtColor(frame, hsv, Imgproc.COLOR_BGR2HSV)
         val whiteMask = Mat()
-        Core.inRange(hls, Scalar(0.0, 200.0, 0.0), Scalar(255.0, 255.0, 255.0), whiteMask)
-        val yellowMask = Mat()
-        Core.inRange(hls, Scalar(15.0, 30.0, 115.0), Scalar(35.0, 204.0, 255.0), yellowMask)
-        val colorMask = Mat()
-        Core.bitwise_or(whiteMask, yellowMask, colorMask)
-        val gray = Mat()
-        Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY)
-        val masked = Mat()
-        Core.bitwise_and(gray, gray, masked, colorMask)
-        val blurred = Mat()
-        Imgproc.GaussianBlur(masked, blurred, Size(5.0, 5.0), 0.0)
-        val edges = Mat()
-        Imgproc.Canny(blurred, edges, 50.0, 150.0)
-        hls.release(); whiteMask.release(); yellowMask.release(); colorMask.release()
-        gray.release(); masked.release(); blurred.release()
+        Core.inRange(hsv, Scalar(0.0, 0.0, 160.0), Scalar(180.0, 60.0, 255.0), whiteMask)
+        hsv.release()
 
-        val mask = Mat.zeros(edges.size(), edges.type())
-        val height = edges.rows()
-        val width = edges.cols()
+        val roiMask = Mat.zeros(whiteMask.size(), whiteMask.type())
+        val height = whiteMask.rows()
+        val width = whiteMask.cols()
         val points = MatOfPoint(
-            Point(width * 0.05, height.toDouble()),
-            Point(width * 0.45, height * 0.60),
-            Point(width * 0.55, height * 0.60),
-            Point(width * 0.95, height.toDouble())
+            Point(width * 0.03, height.toDouble()),
+            Point(width * 0.37, height * 0.42),
+            Point(width * 0.63, height * 0.42),
+            Point(width * 0.97, height.toDouble())
         )
-        Imgproc.fillPoly(mask, listOf(points), Scalar(255.0))
-        val result = Mat()
-        Core.bitwise_and(edges, mask, result)
-        edges.release(); mask.release(); points.release()
-        return result
+        Imgproc.fillPoly(roiMask, listOf(points), Scalar(255.0))
+        val roiWhiteMask = Mat()
+        Core.bitwise_and(whiteMask, roiMask, roiWhiteMask)
+
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
+        val cleanedMask = Mat()
+        Imgproc.morphologyEx(roiWhiteMask, cleanedMask, Imgproc.MORPH_OPEN, kernel)
+
+        whiteMask.release()
+        roiMask.release()
+        roiWhiteMask.release()
+        points.release()
+        kernel.release()
+        return cleanedMask
     }
 }

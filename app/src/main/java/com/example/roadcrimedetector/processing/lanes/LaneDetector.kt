@@ -1,45 +1,77 @@
 package com.example.roadcrimedetector.processing.lanes
 
 import org.opencv.core.Mat
+import org.opencv.core.Core
+import org.opencv.core.Point
+import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
-import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 class LaneDetector {
     fun detect(frame: Mat): Pair<LineModel?, LineModel?> {
-        val edges = LanePreprocessor.preprocess(frame)
+        val mask = LanePreprocessor.createWhiteMask(frame)
+        val edges = Mat()
+        Imgproc.Canny(mask, edges, 40.0, 120.0)
         val segmentsMat = Mat()
-        Imgproc.HoughLinesP(edges, segmentsMat, 1.0, Math.PI / 180, 30, 20.0, 150.0)
-        val segments = mutableListOf<Point4>()
+        Imgproc.HoughLinesP(edges, segmentsMat, 1.0, Math.PI / 180, 10, 8.0, 4.0)
+        val segments = mutableListOf<LineSegment>()
         for (index in 0 until segmentsMat.rows()) {
             val values = segmentsMat.get(index, 0)
-            val segment = Point4(values[0].toFloat(), values[1].toFloat(), values[2].toFloat(), values[3].toFloat())
-            val slope = if (segment.x2 - segment.x1 != 0f) (segment.y2 - segment.y1) / (segment.x2 - segment.x1) else 999f
-            if (abs(slope) >= 0.3f) segments.add(segment)
+            val first = LanePoint(values[0].toFloat(), values[1].toFloat())
+            val second = LanePoint(values[2].toFloat(), values[3].toFloat())
+            val segment = if (first.y <= second.y) LineSegment(first, second) else LineSegment(second, first)
+            val deltaX = segment.end.x - segment.start.x
+            val deltaY = segment.end.y - segment.start.y
+            val length = sqrt(deltaX * deltaX + deltaY * deltaY)
+            val angle = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
+            val centerX = (segment.start.x + segment.end.x) / 2f
+            val centerY = (segment.start.y + segment.end.y) / 2f
+            if (length >= 8f && angle in 18.0..162.0 &&
+                centerY >= frame.rows() * 0.42f &&
+                centerX in (frame.cols() * 0.03f)..(frame.cols() * 0.97f)
+            ) {
+                segments.add(segment)
+            }
         }
-        edges.release(); segmentsMat.release()
+        edges.release()
+        segmentsMat.release()
+
+        val verifiedSegments = filterSegmentsUsingMask(segments, mask)
+        mask.release()
 
         val midX = frame.width() / 2f
-        val left = segments.filter { slope(it) < 0 && (it.x1 + it.x2) / 2f < midX }
-        val right = segments.filter { slope(it) > 0 && (it.x1 + it.x2) / 2f > midX }
-        return Pair(fit(left, frame.rows()), fit(right, frame.rows()))
+        val left = verifiedSegments.filter { (it.start.x + it.end.x) / 2f < midX }
+        val right = verifiedSegments.filter { (it.start.x + it.end.x) / 2f >= midX }
+        return Pair(createLine(left), createLine(right))
     }
 
-    private fun slope(segment: Point4) = (segment.y2 - segment.y1) / (segment.x2 - segment.x1 + 1e-6f)
+    private fun filterSegmentsUsingMask(segments: List<LineSegment>, mask: Mat): List<LineSegment> {
+        val lineMask = Mat.zeros(mask.size(), mask.type())
+        val overlap = Mat()
+        val accepted = segments.filter { segment ->
+            lineMask.setTo(Scalar(0.0))
+            Imgproc.line(
+                lineMask,
+                Point(segment.start.x.toDouble(), segment.start.y.toDouble()),
+                Point(segment.end.x.toDouble(), segment.end.y.toDouble()),
+                Scalar(255.0),
+                3
+            )
+            Core.bitwise_and(lineMask, mask, overlap)
+            val linePixels = Core.countNonZero(lineMask)
+            linePixels > 0 && Core.countNonZero(overlap).toDouble() / linePixels >= 0.30
+        }
+        lineMask.release()
+        overlap.release()
+        return accepted
+    }
 
-    private fun fit(segments: List<Point4>, frameHeight: Int): LineModel? {
-        if (segments.size < 2) return null
-        val points = segments.flatMap { listOf(floatArrayOf(it.x1, it.y1), floatArrayOf(it.x2, it.y2)) }
-        val n = points.size
-        val sumX = points.sumOf { it[0].toDouble() }.toFloat()
-        val sumY = points.sumOf { it[1].toDouble() }.toFloat()
-        val sumXY = points.sumOf { (it[0] * it[1]).toDouble() }.toFloat()
-        val sumXX = points.sumOf { (it[0] * it[0]).toDouble() }.toFloat()
-        val denominator = n * sumXX - sumX * sumX
-        if (abs(denominator) < 1e-3f) return null
-        val m = (n * sumXY - sumX * sumY) / denominator
-        val b = (sumY - m * sumX) / n
-        val bottom = frameHeight.toFloat()
-        val top = frameHeight * 0.60f
-        return LineModel(m, b, LaneLineClassifier.classify(segments, bottom, top), segments, (bottom - b) / m, bottom, (top - b) / m, top)
+    private fun createLine(segments: List<LineSegment>): LineModel? {
+        if (segments.isEmpty()) return null
+        return LineModel(
+            type = LineType.UNKNOWN,
+            segments = segments
+        )
     }
 }

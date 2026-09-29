@@ -4,7 +4,7 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 object LaneLineClassifier {
-    fun classify(segments: List<Point4>, yBottom: Float, yTop: Float): LineType {
+    fun classify(segments: List<LineSegment>, yBottom: Float, yTop: Float): LineType {
         if (segments.isEmpty()) return LineType.UNKNOWN
         val totalSpan = abs(yBottom - yTop)
         if (totalSpan < 1f) return LineType.UNKNOWN
