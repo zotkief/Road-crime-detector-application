@@ -5,6 +5,7 @@ import com.example.roadcrimedetector.model.LaneCrossingViolation
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.processing.lanes.LineModel
+import com.example.roadcrimedetector.processing.lanes.LineType
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -43,7 +44,12 @@ class LaneCrossingDetector : ViolationRule() {
             val track = tracks.getValue(trackId)
             val lines = listOf(Lane.LEFT to leftLane, Lane.RIGHT to rightLane)
             for ((lane, line) in lines) {
-                if (line == null) continue
+                if (line == null || line.type != LineType.SOLID) {
+                    track.sides.remove(lane)
+                    track.pendingSides.remove(lane)
+                    track.pendingFrames.remove(lane)
+                    continue
+                }
                 val distance = signedDistance(track.x, track.y, line) ?: continue
                 val side = classifySide(distance, track.sides[lane])
                 val previousSide = track.sides[lane]
@@ -137,8 +143,7 @@ class LaneCrossingDetector : ViolationRule() {
     }
 
     private fun signedDistance(x: Float, y: Float, line: LineModel): Float? {
-        var closestDistance: Float? = null
-        var closestMagnitude = Float.POSITIVE_INFINITY
+        val distances = mutableListOf<Float>()
         for (segment in line.segments) {
             val dx = segment.end.x - segment.start.x
             val dy = segment.end.y - segment.start.y
@@ -151,12 +156,31 @@ class LaneCrossingDetector : ViolationRule() {
             val orientation = if (segment.start.y <= segment.end.y) 1f else -1f
             val distance = orientation * (dx * (y - segment.start.y) - dy * (x - segment.start.x)) /
                 sqrt(lengthSquared)
-            if (abs(distance) < closestMagnitude) {
-                closestDistance = distance
-                closestMagnitude = abs(distance)
+            distances += distance
+        }
+        if (distances.isEmpty()) return null
+
+        val edgeCenters = mutableListOf<Float>()
+        val edgeCounts = mutableListOf<Int>()
+        for (distance in distances.sorted()) {
+            val lastIndex = edgeCenters.lastIndex
+            if (lastIndex >= 0 && distance - edgeCenters[lastIndex] <= CONTOUR_EDGE_CLUSTER_TOLERANCE) {
+                val count = edgeCounts[lastIndex] + 1
+                edgeCenters[lastIndex] = (edgeCenters[lastIndex] * edgeCounts[lastIndex] + distance) / count
+                edgeCounts[lastIndex] = count
+            } else {
+                edgeCenters += distance
+                edgeCounts += 1
             }
         }
-        return closestDistance
+
+        val sortedCenters = edgeCenters.sorted()
+        val middle = sortedCenters.size / 2
+        return if (sortedCenters.size % 2 == 1) {
+            sortedCenters[middle]
+        } else {
+            (sortedCenters[middle - 1] + sortedCenters[middle]) / 2f
+        }
     }
 
     private fun classifySide(distance: Float, previousSide: Int?): Int = when {
@@ -173,6 +197,7 @@ class LaneCrossingDetector : ViolationRule() {
     private companion object {
         const val DISTANCE_HYSTERESIS = 8f
         const val SEGMENT_MARGIN = 0.15f
+        const val CONTOUR_EDGE_CLUSTER_TOLERANCE = 4f
         const val MAX_MATCH_COST = 2.0f
         const val MAX_MISSED_FRAMES = 3L
         const val CROSSING_CONFIRMATION_FRAMES = 2

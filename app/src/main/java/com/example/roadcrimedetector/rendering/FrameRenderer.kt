@@ -5,6 +5,7 @@ import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
 import com.example.roadcrimedetector.processing.lanes.LineModel
+import com.example.roadcrimedetector.processing.lanes.LineType
 import com.example.roadcrimedetector.processing.tracking.TrackedVehicle
 
 class FrameRenderer {
@@ -18,16 +19,22 @@ class FrameRenderer {
         for (line in lines) {
             line ?: continue
             segmentCount += line.segments.size
+            val color = when (line.type) {
+                LineType.SOLID -> Scalar(0.0, 255.0, 0.0)
+                LineType.DASHED -> Scalar(0.0, 255.0, 255.0)
+                LineType.TRANSVERSE -> Scalar(255.0, 0.0, 0.0)
+                LineType.OTHER -> Scalar(0.0, 0.0, 255.0)
+            }
             for (segment in line.segments) {
                 Imgproc.line(
                     mat,
                     Point(segment.start.x.toDouble(), segment.start.y.toDouble()),
                     Point(segment.end.x.toDouble(), segment.end.y.toDouble()),
-                    Scalar(0.0, 0.0, 255.0),
+                    color,
                     3
                 )
-                Imgproc.circle(mat, Point(segment.start.x.toDouble(), segment.start.y.toDouble()), 3, Scalar(0.0, 0.0, 255.0), -1)
-                Imgproc.circle(mat, Point(segment.end.x.toDouble(), segment.end.y.toDouble()), 3, Scalar(0.0, 0.0, 255.0), -1)
+                Imgproc.circle(mat, Point(segment.start.x.toDouble(), segment.start.y.toDouble()), 3, color, -1)
+                Imgproc.circle(mat, Point(segment.end.x.toDouble(), segment.end.y.toDouble()), 3, color, -1)
             }
         }
         Imgproc.putText(mat, "Segments: $segmentCount", Point(20.0, 35.0), Imgproc.FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255.0, 255.0, 255.0), 2)
