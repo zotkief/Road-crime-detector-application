@@ -5,11 +5,10 @@ import org.opencv.core.Core
 import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
-import kotlin.math.atan2
 import kotlin.math.sqrt
 
 class LaneDetector {
-    fun detect(frame: Mat): Pair<LineModel?, LineModel?> {
+    fun detect(frame: Mat): LaneDetectionResult {
         val mask = LanePreprocessor.createWhiteMask(frame)
         val edges = Mat()
         Imgproc.Canny(mask, edges, 40.0, 120.0)
@@ -24,10 +23,9 @@ class LaneDetector {
             val deltaX = segment.end.x - segment.start.x
             val deltaY = segment.end.y - segment.start.y
             val length = sqrt(deltaX * deltaX + deltaY * deltaY)
-            val angle = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
             val centerX = (segment.start.x + segment.end.x) / 2f
             val centerY = (segment.start.y + segment.end.y) / 2f
-            if (length >= 8f && angle in 18.0..162.0 &&
+            if (length >= 8f &&
                 centerY >= frame.rows() * 0.42f &&
                 centerX in (frame.cols() * 0.03f)..(frame.cols() * 0.97f)
             ) {
@@ -40,10 +38,38 @@ class LaneDetector {
         val verifiedSegments = filterSegmentsUsingMask(segments, mask)
         mask.release()
 
+        val yTop = frame.rows() * 0.42f
+        val yBottom = frame.rows().toFloat()
+        val transverse = verifiedSegments.filter { segment ->
+            val dx = kotlin.math.abs(segment.end.x - segment.start.x)
+            val dy = kotlin.math.abs(segment.end.y - segment.start.y)
+            dx > 0f && dy <= dx * 0.35f
+        }
+        val remaining = verifiedSegments - transverse.toSet()
+        val laneShaped = remaining.filter { segment ->
+            val dx = kotlin.math.abs(segment.end.x - segment.start.x)
+            val dy = kotlin.math.abs(segment.end.y - segment.start.y)
+            dy >= 1f && dx / dy in 0.08f..2.5f
+        }
         val midX = frame.width() / 2f
-        val left = verifiedSegments.filter { (it.start.x + it.end.x) / 2f < midX }
-        val right = verifiedSegments.filter { (it.start.x + it.end.x) / 2f >= midX }
-        return Pair(createLine(left), createLine(right))
+        val leftSegments = laneShaped.filter { (it.start.x + it.end.x) / 2f < midX }
+        val rightSegments = laneShaped.filter { (it.start.x + it.end.x) / 2f >= midX }
+        val leftType = LaneLineClassifier.classify(leftSegments, yBottom, yTop)
+        val rightType = LaneLineClassifier.classify(rightSegments, yBottom, yTop)
+        val left = createLaneLine(leftSegments, leftType)
+        val right = createLaneLine(rightSegments, rightType)
+        val otherSegments = (remaining - laneShaped.toSet()) +
+            (if (leftType == LineType.OTHER) leftSegments else emptyList()) +
+            (if (rightType == LineType.OTHER) rightSegments else emptyList())
+        val transverseType = LaneLineClassifier.classify(transverse, yBottom, yTop)
+        val otherType = LaneLineClassifier.classify(otherSegments, yBottom, yTop)
+
+        return LaneDetectionResult(
+            leftLane = left,
+            rightLane = right,
+            transverseLines = if (transverse.isEmpty()) emptyList() else listOf(LineModel(transverseType, transverse)),
+            otherLines = if (otherSegments.isEmpty()) emptyList() else listOf(LineModel(otherType, otherSegments))
+        )
     }
 
     private fun filterSegmentsUsingMask(segments: List<LineSegment>, mask: Mat): List<LineSegment> {
@@ -67,11 +93,7 @@ class LaneDetector {
         return accepted
     }
 
-    private fun createLine(segments: List<LineSegment>): LineModel? {
-        if (segments.isEmpty()) return null
-        return LineModel(
-            type = LineType.UNKNOWN,
-            segments = segments
-        )
-    }
+    private fun createLaneLine(segments: List<LineSegment>, type: LineType): LineModel? =
+        if (segments.isEmpty() || type == LineType.OTHER || type == LineType.TRANSVERSE) null
+        else LineModel(type, segments)
 }
