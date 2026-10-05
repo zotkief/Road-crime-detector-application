@@ -6,6 +6,7 @@ import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Incident
 import com.example.roadcrimedetector.model.LaneCrossingViolation
 import com.example.roadcrimedetector.model.LocationSnapshot
+import com.example.roadcrimedetector.model.OvertakingOnCrosswalkViolation
 import com.example.roadcrimedetector.model.StoredOtherViolation
 import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.model.Violation
@@ -137,6 +138,12 @@ class IncidentRepository(context: Context) {
         val violationType = ViolationType.valueOf(violationJson.getString("type"))
         val violation = when (violationType) {
             ViolationType.LANE_VIOLATION -> LaneCrossingViolation(
+                detection,
+                description,
+                timestampMillis,
+                position
+            )
+            ViolationType.OVERTAKING_ON_CROSSWALK -> OvertakingOnCrosswalkViolation(
                 detection,
                 description,
                 timestampMillis,

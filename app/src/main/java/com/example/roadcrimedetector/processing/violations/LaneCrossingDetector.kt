@@ -33,6 +33,7 @@ class LaneCrossingDetector : ViolationRule() {
         detections: List<Detection>,
         leftLane: LineModel?,
         rightLane: LineModel?,
+        transverseLines: List<LineModel>,
         timestampMillis: Long
     ): List<Violation> {
         frameNumber++
