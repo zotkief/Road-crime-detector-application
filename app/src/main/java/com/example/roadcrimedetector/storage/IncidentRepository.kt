@@ -70,6 +70,24 @@ class IncidentRepository(context: Context) {
     }
 
     @Synchronized
+    fun delete(incidentId: String): Boolean {
+        val incidents = readAll()
+        if (incidents.none { it.id == incidentId }) return false
+
+        writeAll(incidents.filterNot { it.id == incidentId })
+        File(root, incidentId).deleteRecursively()
+        return true
+    }
+
+    @Synchronized
+    fun clear() {
+        writeAll(emptyList())
+        root.listFiles()
+            ?.filterNot { it == metadataFile }
+            ?.forEach(File::deleteRecursively)
+    }
+
+    @Synchronized
     fun readAll(): List<Incident> {
         if (!metadataFile.exists()) return emptyList()
         val json = JSONArray(metadataFile.readText())

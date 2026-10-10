@@ -8,7 +8,9 @@ import org.opencv.imgproc.Imgproc
 import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.FrameResult
 import com.example.roadcrimedetector.processing.detection.YoloDetector
+import com.example.roadcrimedetector.processing.lanes.LaneClassification
 import com.example.roadcrimedetector.processing.lanes.LaneDetector
+import com.example.roadcrimedetector.processing.lanes.LaneLineClassifier
 import com.example.roadcrimedetector.processing.tracking.Bbox
 import com.example.roadcrimedetector.processing.tracking.VehicleTracker
 import com.example.roadcrimedetector.processing.violations.ViolationDetector
@@ -19,11 +21,13 @@ const val YOLO_INTERVAL = 200L
 class FrameProcessor(context: Context) : AutoCloseable {
     private val yoloDetector = YoloDetector(context)
     private val vehicleTracker = VehicleTracker()
-    private val laneDetector = LaneDetector()
+    private val laneDetector = LaneDetector(context)
+    private val laneLineClassifier = LaneLineClassifier(frameIsBgr = true)
     private val violationDetector = ViolationDetector()
     private val frameRenderer = FrameRenderer()
     private var lastDetectTime = 0L
     private var lastDetections = emptyList<Detection>()
+    private var lastLaneClassification: LaneClassification? = null
 
     fun process(bitmap: Bitmap): FrameResult {
         val mat = Mat()
@@ -38,17 +42,23 @@ class FrameProcessor(context: Context) : AutoCloseable {
                     Detection("vehicle", it.confidence.toDouble(), floatArrayOf(it.x1, it.y1, it.x2, it.y2), it.classId)
                 }
                 vehicleTracker.update(yoloDetections.map { Bbox(it.x1, it.y1, it.x2, it.y2) }, now)
+                val laneMask = laneDetector.detect(mat)
+                lastLaneClassification = laneLineClassifier.classify(laneMask, mat)
                 lastDetectTime = now
             }
 
-            val laneResult = laneDetector.detect(mat)
+            val laneClassification = lastLaneClassification
             val violations = violationDetector.detect(
                 lastDetections,
-                laneResult.leftLane,
-                laneResult.rightLane,
-                laneResult.transverseLines
+                laneClassification?.leftLane,
+                laneClassification?.rightLane,
+                emptyList()
             )
-            frameRenderer.render(mat, vehicleTracker.current(), *laneResult.allLines.toTypedArray())
+            frameRenderer.render(
+                mat,
+                vehicleTracker.current(),
+                laneClassification?.displayMask
+            )
 
             val output = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
             Utils.matToBitmap(mat, output)
@@ -60,5 +70,6 @@ class FrameProcessor(context: Context) : AutoCloseable {
 
     override fun close() {
         yoloDetector.close()
+        laneDetector.close()
     }
 }
