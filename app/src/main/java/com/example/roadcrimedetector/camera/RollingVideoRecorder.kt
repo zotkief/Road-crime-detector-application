@@ -45,13 +45,13 @@ class RollingVideoRecorder(
     }
 
     fun storedSegments(): List<File> = synchronized(this) {
-        segments.filter { it.exists() && it != activeSegment }
+        recentStoredSegments()
     }
 
     suspend fun snapshotStoredSegments(): List<File> = suspendCancellableCoroutine { continuation ->
         synchronized(this) {
             if (activeSegment == null) {
-                continuation.resume(storedSegments())
+                continuation.resume(recentStoredSegments())
             } else {
                 pendingSnapshot = { files ->
                     if (continuation.isActive) continuation.resume(files)
@@ -102,7 +102,7 @@ class RollingVideoRecorder(
                         if (running) startSegment()
                         val snapshotCallback = pendingSnapshot
                         pendingSnapshot = null
-                        snapshotCallback?.invoke(storedSegments())
+                        snapshotCallback?.invoke(recentStoredSegments())
                     }
                 }
             }
@@ -129,7 +129,7 @@ class RollingVideoRecorder(
     }
 
     private fun cleanupSegments() {
-        val rollingCutoff = System.currentTimeMillis() - ROLLING_VIDEO_DURATION_MILLIS
+        val rollingCutoff = rollingVideoCutoff()
         val oldestRequired = activeIncidents.values.minOrNull()?.minus(BACK_VIDEO_DURATION_MILLIS)
         while (segments.isNotEmpty()) {
             val oldest = segments.firstOrNull() ?: break
@@ -138,6 +138,16 @@ class RollingVideoRecorder(
             segments.removeFirst().delete()
         }
     }
+
+    private fun recentStoredSegments(): List<File> {
+        val cutoff = rollingVideoCutoff()
+        return segments.filter { file ->
+            file.exists() && file != activeSegment && segmentTimestamp(file) >= cutoff
+        }
+    }
+
+    private fun rollingVideoCutoff(): Long =
+        System.currentTimeMillis() - ROLLING_VIDEO_DURATION_MILLIS
 
     private fun copyIncidentSegments(incidentId: String, startedAt: Long): List<File> {
         val destinationDirectory = File(context.filesDir, "incidents/$incidentId/video").apply { mkdirs() }
@@ -162,7 +172,7 @@ class RollingVideoRecorder(
 
     companion object {
         private const val SEGMENT_DURATION_MILLIS = 5_000L
-        private const val ROLLING_VIDEO_DURATION_MILLIS = 60 * 60 * 1_000L
+        private const val ROLLING_VIDEO_DURATION_MILLIS = 5 * 60 * 1_000L
         private const val BACK_VIDEO_DURATION_MILLIS = 30_000L
         private const val FORWARD_VIDEO_DURATION_MILLIS = 30_000L
     }
