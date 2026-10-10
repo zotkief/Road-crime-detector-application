@@ -45,7 +45,7 @@ class LaneCrossingDetector : ViolationRule() {
             val track = tracks.getValue(trackId)
             val lines = listOf(Lane.LEFT to leftLane, Lane.RIGHT to rightLane)
             for ((lane, line) in lines) {
-                if (line == null || line.type != LineType.SOLID) {
+                if (line == null || line.type !in setOf(LineType.SOLID, LineType.CONTINUOUS)) {
                     track.sides.remove(lane)
                     track.pendingSides.remove(lane)
                     track.pendingFrames.remove(lane)
