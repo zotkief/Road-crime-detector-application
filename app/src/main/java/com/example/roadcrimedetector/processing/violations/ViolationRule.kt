@@ -9,6 +9,7 @@ abstract class ViolationRule {
         detections: List<Detection>,
         leftLane: LineModel?,
         rightLane: LineModel?,
+        transverseLines: List<LineModel>,
         timestampMillis: Long
     ): List<Violation>
 }

@@ -46,6 +46,15 @@ class LaneCrossingViolation(
     override fun violationType(): ViolationType = ViolationType.LANE_VIOLATION
 }
 
+class OvertakingOnCrosswalkViolation(
+    detection: Detection,
+    description: String,
+    timestampMillis: Long,
+    position: VehiclePosition
+) : Violation(detection, description, timestampMillis, position) {
+    override fun violationType(): ViolationType = ViolationType.OVERTAKING_ON_CROSSWALK
+}
+
 internal class StoredOtherViolation(
     detection: Detection,
     description: String,
@@ -64,5 +73,6 @@ data class VehiclePosition(
 
 enum class ViolationType {
     LANE_VIOLATION,
+    OVERTAKING_ON_CROSSWALK,
     OTHER
 }

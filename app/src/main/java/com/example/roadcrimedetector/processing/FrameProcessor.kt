@@ -42,7 +42,12 @@ class FrameProcessor(context: Context) : AutoCloseable {
             }
 
             val laneResult = laneDetector.detect(mat)
-            val violations = violationDetector.detect(lastDetections, laneResult.leftLane, laneResult.rightLane)
+            val violations = violationDetector.detect(
+                lastDetections,
+                laneResult.leftLane,
+                laneResult.rightLane,
+                laneResult.transverseLines
+            )
             frameRenderer.render(mat, vehicleTracker.current(), *laneResult.allLines.toTypedArray())
 
             val output = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)

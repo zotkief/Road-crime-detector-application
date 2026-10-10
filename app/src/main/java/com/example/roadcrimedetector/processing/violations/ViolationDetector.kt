@@ -7,7 +7,8 @@ import android.os.SystemClock
 
 class ViolationDetector(
     private val rules: List<ViolationRule> = listOf(
-        LaneCrossingDetector()
+        LaneCrossingDetector(),
+        OvertakingOnCrosswalkDetector()
     ),
     private val startedAtMillis: Long = SystemClock.elapsedRealtime()
 ) {
@@ -15,13 +16,15 @@ class ViolationDetector(
     fun detect(
         detections: List<Detection>,
         leftLane: LineModel?,
-        rightLane: LineModel?
+        rightLane: LineModel?,
+        transverseLines: List<LineModel>
     ): List<Violation> =
         rules.flatMap { rule ->
             rule.detect(
                 detections,
                 leftLane,
                 rightLane,
+                transverseLines,
                 SystemClock.elapsedRealtime() - startedAtMillis
             )
         }
