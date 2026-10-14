@@ -2,10 +2,12 @@ package com.example.roadcrimedetector.camera
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.widget.VideoView
 import android.graphics.BitmapFactory
+import android.util.Log
+import android.widget.VideoView
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
-import androidx.compose.material.OutlinedTextField
+import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -28,51 +30,116 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import com.example.roadcrimedetector.model.Incident
 import com.example.roadcrimedetector.location.NominatimGeocoder
+import com.example.roadcrimedetector.storage.PersonalDataRepository
 import com.example.roadcrimedetector.utils.getEmailForVoivodeship
 import com.example.roadcrimedetector.utils.mergeVideosIntoSingleFile
-import androidx.core.content.FileProvider
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
 fun IncidentDetailsScreen(
     incident: Incident,
-    onBack: () -> Unit,
-    onDetailsChanged: (emailContent: String, roadName: String) -> Unit
+    onBack: () -> Unit
 ) {
     var emailContent by rememberSaveable(incident.id) { mutableStateOf(incident.emailContent) }
-    var roadName by rememberSaveable(incident.id) { mutableStateOf(incident.roadName) }
     var voivodeship by remember(incident.id) { mutableStateOf("") }
     var isPreparingEmail by remember { mutableStateOf(false) }
+    var isGeneratingEmail by remember(incident.id) { mutableStateOf(true) }
     val context = LocalContext.current
+    val personalDataRepository = remember(context) { PersonalDataRepository(context) }
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(incident.id) {
-        val address = incident.location?.let {
-            NominatimGeocoder().findAddress(it.latitude, it.longitude)
+        isGeneratingEmail = true
+        try {
+            val address = incident.location?.let {
+                NominatimGeocoder().findAddress(it.latitude, it.longitude)
+            }
+            voivodeship = address?.state.orEmpty()
+            emailContent = incident.violation.generateEmail(
+                incident.location,
+                incident.snapshotFile,
+                personalDataRepository.load()
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            emailContent = ""
+            Log.e("IncidentDetailsScreen", "Nie udało się wygenerować treści zgłoszenia", exception)
+            Toast.makeText(
+                context,
+                "Nie udało się przygotować treści emaila",
+                Toast.LENGTH_LONG
+            ).show()
+        } finally {
+            isGeneratingEmail = false
         }
-        voivodeship = address?.state.orEmpty()
-        emailContent = incident.violation.generateEmail(incident.location)
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color(0xFF424242))
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Button(onClick = onBack) {
-            Text("Wróć do wykroczeń")
+        Button(
+            onClick = onBack,
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFF555555),
+                contentColor = Color.White
+            )
+        ) {
+            Text("← Wróć do wykroczeń", color = Color.White)
+        }
+        Text(
+            "Podgląd zdarzenia",
+            color = Color.White,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        incident.snapshotFile?.let { path ->
+            BitmapFactory.decodeFile(path)?.let { bitmap ->
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Klatka zdarzenia",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                )
+            }
+        }
+        IncidentVideoPlayer(incident.videoFiles)
+
+        Text(
+            "Podstawowe informacje",
+            color = Color.White,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text("Typ: ${incident.violation.violationType()}", color = Color.White)
+        Text("Opis: ${incident.violation.description}", color = Color.White)
+        Text("Czas: ${incident.violation.eventTimestampPolish}", color = Color.White)
+        incident.location?.let { location ->
+            Text(
+                "Lokalizacja: ${location.latitude}, ${location.longitude}",
+                color = Color.White
+            )
         }
         Button(
-            enabled = !isPreparingEmail,
+            enabled = !isPreparingEmail && !isGeneratingEmail && emailContent.isNotBlank(),
             onClick = {
                 coroutineScope.launch {
                     isPreparingEmail = true
@@ -91,7 +158,10 @@ fun IncidentDetailsScreen(
                         val emailIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "video/mp4"
                             putExtra(Intent.EXTRA_EMAIL, arrayOf(getEmailForVoivodeship(voivodeship)))
-                            putExtra(Intent.EXTRA_SUBJECT, "Testowe zgłoszenie zdarzenia drogowego")
+                            putExtra(
+                                Intent.EXTRA_SUBJECT,
+                                "Zgłoszenie zdarzenia drogowego: ${incident.violation.description}"
+                            )
                             putExtra(Intent.EXTRA_TEXT, emailContent)
                             putExtra(Intent.EXTRA_STREAM, shareUri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -104,59 +174,20 @@ fun IncidentDetailsScreen(
                     }
                     isPreparingEmail = false
                 }
-            }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                backgroundColor = Color(0xFF7041C5),
+                contentColor = Color.White,
+                disabledBackgroundColor = Color(0xFF555555),
+                disabledContentColor = Color.White
+            )
         ) {
-            Text(if (isPreparingEmail) "Przygotowywanie..." else "Akceptuj i wyślij email")
+            Text(
+                if (isPreparingEmail || isGeneratingEmail) "Przygotowywanie..." else "Wyślij email",
+                color = Color.White
+            )
         }
-        Text("Szczegóły wykroczenia")
-        Text("Typ: ${incident.violation.violationType()}")
-        Text(incident.violation.description)
-        Text("Etykieta: ${incident.violation.detection.label}")
-        Text("Pewność: ${incident.violation.detection.confidence}")
-        Text("ID klasy: ${incident.violation.detection.classId}")
-        Text("Czas nagrania: ${incident.recordedAtMillis}")
-        Text("Czas wykrycia: ${incident.violation.eventTimestampPolish}")
-        Text(
-            "Pozycja pojazdu: " +
-                "(${incident.violation.position.x1}, ${incident.violation.position.y1}) - " +
-                "(${incident.violation.position.x2}, ${incident.violation.position.y2})"
-        )
-        incident.location?.let { location ->
-            Text("Lokalizacja: ${location.latitude}, ${location.longitude}")
-            Text("Dokładność: ${location.accuracyMeters ?: "brak"} m")
-            Text("Wysokość: ${location.altitudeMeters ?: "brak"} m")
-            Text("Źródło lokalizacji: ${location.provider ?: "brak"}")
-        }
-        incident.snapshotFile?.let { path ->
-            BitmapFactory.decodeFile(path)?.let { bitmap ->
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Klatka zdarzenia",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                )
-            }
-        }
-        OutlinedTextField(
-            value = emailContent,
-            onValueChange = {
-                emailContent = it
-                onDetailsChanged(it, roadName)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Treść emaila") }
-        )
-        OutlinedTextField(
-            value = roadName,
-            onValueChange = {
-                roadName = it
-                onDetailsChanged(emailContent, it)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Nazwa drogi") }
-        )
-        IncidentVideoPlayer(incident.videoFiles)
     }
 }
 
@@ -171,7 +202,7 @@ private fun IncidentVideoPlayer(videoFiles: List<String>) {
     val currentFileIndexState by rememberUpdatedState(currentFileIndex)
 
     if (playableFiles.isEmpty()) {
-        Text("Brak zapisanego klipu wideo")
+        Text("Brak zapisanego klipu wideo", color = Color.White)
         return
     }
 

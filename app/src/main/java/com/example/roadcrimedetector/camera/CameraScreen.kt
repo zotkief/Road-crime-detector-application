@@ -79,6 +79,7 @@ fun CameraScreen(targetFps: Int) {
     var selectedIncident by remember { mutableStateOf<com.example.roadcrimedetector.model.Incident?>(null) }
     var incidents by remember { mutableStateOf(incidentRepository.readAll().reversed()) }
     var analysisUseCase by remember { mutableStateOf<ImageAnalysis?>(null) }
+    var analysisAnalyzer by remember { mutableStateOf<ImageAnalysis.Analyzer?>(null) }
     var lastTime by remember { mutableStateOf(0L) }
     val frameInterval = 1000L / targetFps
     val coroutineScope = rememberCoroutineScope()
@@ -130,8 +131,7 @@ fun CameraScreen(targetFps: Int) {
                 .build()
         )
 
-        analysis.setAnalyzer(executor) { image ->
-
+        val analyzer = ImageAnalysis.Analyzer { image ->
             val now = System.currentTimeMillis()
             if (now - lastTime >= frameInterval) {
                 lastTime = now
@@ -155,6 +155,8 @@ fun CameraScreen(targetFps: Int) {
 
             image.close()
         }
+        analysisAnalyzer = analyzer
+        analysis.setAnalyzer(executor, analyzer)
 
         cameraController.bind(lifecycleOwner, preview, analysis, videoCapture)
         recorder.start(videoCapture)
@@ -185,17 +187,6 @@ fun CameraScreen(targetFps: Int) {
                 onBack = {
                     selectedIncident = null
                     incidents = incidentRepository.readAll().reversed()
-                },
-                onDetailsChanged = { emailContent, roadName ->
-                    incidentRepository.updateDetails(
-                        selectedIncident!!.id,
-                        emailContent,
-                        roadName
-                    )
-                    selectedIncident = selectedIncident!!.copy(
-                        emailContent = emailContent,
-                        roadName = roadName
-                    )
                 }
             )
         } else if (showIncidents) {
@@ -207,6 +198,9 @@ fun CameraScreen(targetFps: Int) {
                     Button(onClick = {
                         showIncidents = false
                         incidents = incidentRepository.readAll().reversed()
+                        analysisAnalyzer?.let { analyzer ->
+                            analysisUseCase?.setAnalyzer(executor, analyzer)
+                        }
                     }) {
                         Text("Wróć do kamery")
                     }
