@@ -16,7 +16,7 @@ import org.opencv.android.OpenCVLoader
 class MainActivity : ComponentActivity() {
 
     companion object {
-        const val TARGET_FPS = 20
+        const val TARGET_FPS = 5
         const val DEBUG_USE_VIDEO = false
 
         init {

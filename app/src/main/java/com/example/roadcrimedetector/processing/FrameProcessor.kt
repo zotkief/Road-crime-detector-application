@@ -11,12 +11,11 @@ import com.example.roadcrimedetector.processing.detection.YoloDetector
 import com.example.roadcrimedetector.processing.lanes.LaneClassification
 import com.example.roadcrimedetector.processing.lanes.LaneDetector
 import com.example.roadcrimedetector.processing.lanes.LaneLineClassifier
-import com.example.roadcrimedetector.processing.tracking.Bbox
 import com.example.roadcrimedetector.processing.tracking.VehicleTracker
 import com.example.roadcrimedetector.processing.violations.ViolationDetector
 import com.example.roadcrimedetector.rendering.FrameRenderer
 
-const val YOLO_INTERVAL = 200L
+const val YOLO_INTERVAL = 100L
 
 class FrameProcessor(context: Context) : AutoCloseable {
     private val yoloDetector = YoloDetector(context)
@@ -41,28 +40,29 @@ class FrameProcessor(context: Context) : AutoCloseable {
                 lastDetections = yoloDetections.map {
                     Detection("vehicle", it.confidence.toDouble(), floatArrayOf(it.x1, it.y1, it.x2, it.y2), it.classId)
                 }
-                vehicleTracker.update(yoloDetections.map { Bbox(it.x1, it.y1, it.x2, it.y2) }, now)
+                vehicleTracker.update(lastDetections, now)
                 val laneMask = laneDetector.detect(mat)
                 lastLaneClassification = laneLineClassifier.classify(laneMask, mat)
                 lastDetectTime = now
             }
 
             val laneClassification = lastLaneClassification
+            val trackedVehicles = vehicleTracker.current()
             val violations = violationDetector.detect(
-                lastDetections,
                 laneClassification?.leftLane,
                 laneClassification?.rightLane,
-                emptyList()
+                emptyList(),
+                trackedVehicles
             )
             frameRenderer.render(
                 mat,
-                vehicleTracker.current(),
+                trackedVehicles,
                 laneClassification?.displayMask
             )
 
             val output = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
             Utils.matToBitmap(mat, output)
-            return FrameResult(output, lastDetections, violations)
+            return FrameResult(output, lastDetections, violations, trackedVehicles)
         } finally {
             mat.release()
         }
