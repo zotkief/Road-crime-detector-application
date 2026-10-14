@@ -6,9 +6,9 @@ import com.example.roadcrimedetector.model.VehiclePosition
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.processing.lanes.LineModel
 import com.example.roadcrimedetector.processing.lanes.LineType
+import com.example.roadcrimedetector.processing.tracking.TrackedVehicle
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.sqrt
 
 class OvertakingOnCrosswalkDetector : ViolationRule() {
     private data class VehicleSample(
@@ -16,14 +16,12 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
         val centerX: Float,
         val centerY: Float,
         val width: Float,
-        val height: Float,
-        val frame: Long
+        val height: Float
     )
 
     private data class Track(
         val id: Int,
-        val history: ArrayDeque<VehicleSample> = ArrayDeque(),
-        var lastSeenFrame: Long = 0L
+        val history: List<VehicleSample>
     )
 
     private data class Crosswalk(
@@ -46,24 +44,20 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
         var reported: Boolean = false
     )
 
-    private val tracks = mutableMapOf<Int, Track>()
     private val pairs = mutableMapOf<PairKey, PairState>()
-    private var nextTrackId = 0
-    private var frameNumber = 0L
     private var crosswalkCandidate: Crosswalk? = null
     private var crosswalkCandidateFrames = 0
     private var confirmedCrosswalk: Crosswalk? = null
 
     override fun detect(
-        detections: List<Detection>,
         leftLane: LineModel?,
         rightLane: LineModel?,
         transverseLines: List<LineModel>,
-        timestampMillis: Long
+        timestampMillis: Long,
+        trackedVehicles: Map<Int, TrackedVehicle>
     ): List<Violation> {
-        frameNumber++
         updateCrosswalk(transverseLines)
-        val currentTracks = updateTracks(detections)
+        val currentTracks = trackedVehicles.values.mapNotNull(::sampleTrack)
         val activePairKeys = mutableSetOf<PairKey>()
         val violations = mutableListOf<Violation>()
         val crosswalk = confirmedCrosswalk
@@ -113,8 +107,14 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
         }
 
         pairs.keys.removeAll { it !in activePairKeys }
-        tracks.values.removeAll { frameNumber - it.lastSeenFrame > MAX_MISSED_FRAMES }
         return violations
+    }
+
+    private fun sampleTrack(vehicle: TrackedVehicle): Track? {
+        val history = vehicle.history
+            .filter { it.detection.classId in VEHICLE_CLASS_IDS }
+            .map { sample(it.detection) }
+        return history.takeIf { it.isNotEmpty() }?.let { Track(vehicle.id, it) }
     }
 
     private val Track.current: VehicleSample
@@ -195,49 +195,6 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
         abs(first.centerX - second.centerX) <= max(MIN_CROSSWALK_X_SHIFT, first.width * MAX_CROSSWALK_X_SHIFT_RATIO) &&
             abs(first.centerY - second.centerY) <= max(MIN_CROSSWALK_Y_SHIFT, first.height * MAX_CROSSWALK_Y_SHIFT_RATIO)
 
-    private fun updateTracks(detections: List<Detection>): List<Track> {
-        val vehicleDetections = detections.filter { it.classId in VEHICLE_CLASS_IDS }
-        val candidates = mutableListOf<Triple<Float, Int, Int>>()
-        for ((trackId, track) in tracks) {
-            for ((index, detection) in vehicleDetections.withIndex()) {
-                val sample = sample(detection)
-                val previous = track.current
-                val distance = sqrt(
-                    (sample.centerX - previous.centerX) * (sample.centerX - previous.centerX) +
-                        (sample.centerY - previous.centerY) * (sample.centerY - previous.centerY)
-                )
-                val sizeDifference = abs(sample.width - previous.width) / max(sample.width, previous.width) +
-                    abs(sample.height - previous.height) / max(sample.height, previous.height)
-                val cost = distance / max(previous.width, previous.height) + sizeDifference
-                if (cost <= MAX_MATCH_COST) candidates += Triple(cost, trackId, index)
-            }
-        }
-
-        val usedTracks = mutableSetOf<Int>()
-        val usedDetections = mutableSetOf<Int>()
-        for ((_, trackId, detectionIndex) in candidates.sortedBy { it.first }) {
-            if (trackId in usedTracks || detectionIndex in usedDetections) continue
-            val track = tracks.getValue(trackId)
-            record(track, vehicleDetections[detectionIndex])
-            usedTracks += trackId
-            usedDetections += detectionIndex
-        }
-
-        for ((index, detection) in vehicleDetections.withIndex()) {
-            if (index in usedDetections) continue
-            val track = Track(nextTrackId++)
-            tracks[track.id] = track
-            record(track, detection)
-        }
-        return tracks.values.filter { it.lastSeenFrame == frameNumber }
-    }
-
-    private fun record(track: Track, detection: Detection) {
-        track.history.addLast(sample(detection))
-        if (track.history.size > TRACK_HISTORY_SIZE) track.history.removeFirst()
-        track.lastSeenFrame = frameNumber
-    }
-
     private fun sample(detection: Detection): VehicleSample {
         val box = detection.box
         return VehicleSample(
@@ -245,8 +202,7 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
             centerX = (box[0] + box[2]) / 2f,
             centerY = (box[1] + box[3]) / 2f,
             width = (box[2] - box[0]).coerceAtLeast(1f),
-            height = (box[3] - box[1]).coerceAtLeast(1f),
-            frame = frameNumber
+            height = (box[3] - box[1]).coerceAtLeast(1f)
         )
     }
 
@@ -278,10 +234,7 @@ class OvertakingOnCrosswalkDetector : ViolationRule() {
         const val MIN_LATERAL_SEPARATION_RATIO = 0.35f
         const val MAX_LATERAL_SEPARATION_RATIO = 3.5f
         const val MIN_LONGITUDINAL_SEPARATION_RATIO = 0.25f
-        const val MAX_MATCH_COST = 2f
-        const val MAX_MISSED_FRAMES = 3L
         const val CROSSWALK_CONFIRMATION_FRAMES = 3
-        const val TRACK_HISTORY_SIZE = 5
         const val PAIR_HISTORY_SIZE = 5
         const val ORDER_CONFIRMATION_FRAMES = 2
     }

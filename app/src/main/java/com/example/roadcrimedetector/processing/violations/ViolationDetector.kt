@@ -1,31 +1,31 @@
 package com.example.roadcrimedetector.processing.violations
 
-import com.example.roadcrimedetector.model.Detection
 import com.example.roadcrimedetector.model.Violation
 import com.example.roadcrimedetector.processing.lanes.LineModel
-import android.os.SystemClock
+import com.example.roadcrimedetector.processing.tracking.TrackedVehicle
 
 class ViolationDetector(
     private val rules: List<ViolationRule> = listOf(
         LaneCrossingDetector(),
         OvertakingOnCrosswalkDetector()
-    ),
-    private val startedAtMillis: Long = SystemClock.elapsedRealtime()
+    )
 ) {
 
     fun detect(
-        detections: List<Detection>,
         leftLane: LineModel?,
         rightLane: LineModel?,
-        transverseLines: List<LineModel>
-    ): List<Violation> =
-        rules.flatMap { rule ->
+        transverseLines: List<LineModel>,
+        trackedVehicles: Map<Int, TrackedVehicle>
+    ): List<Violation> {
+        val timestampMillis = System.currentTimeMillis()
+        return rules.flatMap { rule ->
             rule.detect(
-                detections,
                 leftLane,
                 rightLane,
                 transverseLines,
-                SystemClock.elapsedRealtime() - startedAtMillis
+                timestampMillis,
+                trackedVehicles
             )
         }
+    }
 }

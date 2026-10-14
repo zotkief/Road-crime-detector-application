@@ -56,5 +56,8 @@ data class ClassifiedLaneMask(
         const val DASHED: Byte = 2
         const val UNKNOWN: Byte = 3
         const val CROSSING: Byte = 4
+        const val RIGHT_CONTINOUS: Byte = 5
+        const val LEFT_CONTINOUS: Byte = 6
+
     }
 }

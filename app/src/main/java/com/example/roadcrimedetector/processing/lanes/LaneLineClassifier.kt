@@ -17,10 +17,18 @@ data class LaneClassification(
 )
 
 /**
- * Maska (bez dziur, zaznacza linię razem z przerwami) służy do LOKALIZACJI linii:
- * tracker + krzywa. O tym, czy linia jest ciągła czy przerywana, decyduje KOLOR
- * w klatce: wzdłuż krzywej liczymy kontrast jasności kreski względem asfaltu
- * obok i szukamy w tym profilu "schodów" (kreska / przerwa).
+ * Maska (bez dziur, zaznacza linię razem z przerwami; linię mieszaną jako jeden obiekt)
+ * służy do LOKALIZACJI linii: tracker + krzywa. O tym, czy linia jest ciągła, przerywana
+ * czy mieszana, decyduje KOLOR w klatce: wzdłuż krzywej liczymy kontrast jasności kreski
+ * względem asfaltu obok i szukamy w tym profilu "schodów" (kreska / przerwa).
+ *
+ * Linia mieszana (ciągła + przerywana obok siebie):
+ * - pas wokół krzywej dzielimy na dwie połowy (lewą i prawą) i dla każdej liczymy
+ *   OSOBNY profil kontrastu,
+ * - dwie połowy rozważamy tylko wtedy, gdy w poziomym profilu jasności widać ciemną
+ *   szczelinę między dwiema kreskami (inaczej pojedyncza linia dałaby fałszywy wynik),
+ * - wynik: LEFT_CONTINOUS (ciągła po lewej, przerywana po prawej) lub
+ *   RIGHT_CONTINOUS (ciągła po prawej, przerywana po lewej). Lewo/prawo dotyczy obrazu.
  *
  * [frameIsBgr] - true, jeśli Mat ma kolejność kanałów BGR (VideoCapture, imread),
  * false dla RGB/RGBA (np. Utils.bitmapToMat).
@@ -267,19 +275,17 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
             .coerceAtMost(mask.height - 1)
         if (y1 - y0 + 1 < mask.height * MIN_REGION_RATIO) return LineType.UNKNOWN
 
-        // 1) Profil kontrastu: dla każdego wiersza (jasność kreski - jasność asfaltu)
+        // 1) Pomiary wierszy: kontrast całej linii oraz jej lewej i prawej połowy
         val n = y1 - y0 + 1
-        val contrast = FloatArray(n)
-        val valid = BooleanArray(n)
+        val rows = arrayOfNulls<RowMeasure>(n)
         var validCount = 0
         var eligibleRows = 0
         for (y in y0..y1) {
             if (skipRows[y]) continue
             eligibleRows++
-            val c = rowContrast(mask, frame, channels, curve, y, scaleX, scaleY)
-            if (c != null) {
-                contrast[y - y0] = c
-                valid[y - y0] = true
+            val m = rowMeasure(mask, frame, channels, curve, y, scaleX, scaleY)
+            if (m != null) {
+                rows[y - y0] = m
                 validCount++
             }
         }
@@ -287,18 +293,77 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
             return LineType.UNKNOWN
         }
 
-        // wiersze bez danych: przenieś ostatnią znaną wartość
-        val firstValid = valid.indexOfFirst { it }
-        if (firstValid < 0) return LineType.UNKNOWN
-        var last = contrast[firstValid]
-        for (i in 0 until n) {
-            if (valid[i]) last = contrast[i] else contrast[i] = last
+        // 2) Czy to linia podwójna (dwie kreski ze szczeliną)? Jeśli nie - pojedyncza linia.
+        if (!looksLikeDoubleLine(rows)) {
+            val combined = FloatArray(n) { rows[it]?.combined ?: Float.NaN }
+            return profileType(combined, y0, mask.height, horizonY, bottomY)
         }
 
-        // 2) Wygładzenie (mediana 3) - żeby szum nie robił mikroprzerw
+        // 3) Linia podwójna: osobna klasyfikacja lewej i prawej połowy
+        val leftType = profileType(
+            FloatArray(n) { rows[it]?.left ?: Float.NaN }, y0, mask.height, horizonY, bottomY
+        )
+        val rightType = profileType(
+            FloatArray(n) { rows[it]?.right ?: Float.NaN }, y0, mask.height, horizonY, bottomY
+        )
+        return when {
+            leftType == LineType.CONTINUOUS && rightType == LineType.DASHED ->
+                LineType.LEFT_CONTINOUS
+            leftType == LineType.DASHED && rightType == LineType.CONTINUOUS ->
+                LineType.RIGHT_CONTINOUS
+            leftType == LineType.CONTINUOUS && rightType == LineType.CONTINUOUS ->
+                LineType.CONTINUOUS // podwójna ciągła
+            leftType == LineType.DASHED && rightType == LineType.DASHED ->
+                LineType.DASHED
+            else -> LineType.UNKNOWN // którakolwiek połowa niepewna -> nie zgadujemy
+        }
+    }
+
+    /**
+     * Linia jest podwójna, gdy w wierszach, w których świecą OBIE połowy, w poziomym
+     * profilu jasności widać wyraźną ciemną szczelinę między nimi. Wiersze, w których
+     * świeci tylko jedna połowa (przerwa w przerywanej), nie liczą się ani za, ani przeciw.
+     */
+    private fun looksLikeDoubleLine(rows: Array<RowMeasure?>): Boolean {
+        var bothBright = 0
+        var withValley = 0
+        for (row in rows) {
+            if (row == null || row.valley.isInfinite()) continue
+            val weaker = min(row.left, row.right)
+            if (weaker < MIN_LINE_CONTRAST) continue
+            bothBright++
+            if (row.valley < weaker * (1f - DOUBLE_VALLEY_DEPTH)) withValley++
+        }
+        return bothBright >= MIN_DOUBLE_ROWS && withValley >= bothBright * DOUBLE_VALLEY_ROWS_RATIO
+    }
+
+    /**
+     * Typ jednego profilu kontrastu wzdłuż krzywej: CONTINUOUS / DASHED / UNKNOWN.
+     * [values] - kontrast na wiersz okna (NaN = brak danych).
+     */
+    private fun profileType(
+        values: FloatArray,
+        y0: Int,
+        maskHeight: Int,
+        horizonY: Float,
+        bottomY: Float
+    ): LineType {
+        val n = values.size
+
+        // wiersze bez danych: przenieś ostatnią znaną wartość
+        val firstValid = values.indexOfFirst { !it.isNaN() }
+        if (firstValid < 0) return LineType.UNKNOWN
+        val contrast = FloatArray(n)
+        var last = values[firstValid]
+        for (i in 0 until n) {
+            if (!values[i].isNaN()) last = values[i]
+            contrast[i] = last
+        }
+
+        // wygładzenie (mediana 3) - żeby szum nie robił mikroprzerw
         val smooth = median3(contrast)
 
-        // 3) Próg adaptacyjny: czy w profilu widać dwa poziomy (kreska / asfalt)?
+        // próg adaptacyjny: czy w profilu widać dwa poziomy (kreska / asfalt)?
         val sorted = smooth.sortedArray()
         val hi = percentile(sorted, 0.9f)
         val lo = percentile(sorted, 0.1f)
@@ -312,8 +377,8 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         val last2 = occupied.indexOfLast { it }
         if (first < 0) return LineType.UNKNOWN
 
-        // 4) Przerwy w jednostkach "drogi" (wagi perspektywy), nie w surowych pikselach
-        val minGapW = max(3f, mask.height * MIN_GAP_RATIO)
+        // przerwy w jednostkach "drogi" (wagi perspektywy), nie w surowych pikselach
+        val minGapW = max(3f, maskHeight * MIN_GAP_RATIO)
         var gaps = 0
         var gapW = 0f
         var totalW = 0f
@@ -337,7 +402,7 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         if (bottomGapW >= minGapW) gaps++
 
         val coverage = coveredW / totalW
-        val span = (last2 - first + 1).toFloat() / mask.height
+        val span = (last2 - first + 1).toFloat() / maskHeight
 
         return when {
             bimodal && gaps >= 1 && coverage < DASHED_MAX_COVERAGE -> LineType.DASHED
@@ -355,15 +420,19 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
     }
 
     /**
-     * Kontrast w wierszu maski [y]: jasność kreski minus jasność asfaltu obok.
-     * - szerokość kreski bierzemy z maski (ciągły fragment przy krzywej),
-     * - jasność kreski = max z lokalnej średniej 3 pikseli w tym fragmencie klatki,
+     * Pomiar wiersza maski [y]. Kontrasty to jasność kreski minus jasność asfaltu obok:
+     * - zasięg linii bierzemy z maski (ciągły fragment przy krzywej; dla linii mieszanej
+     *   obejmuje obie kreski i szczelinę),
+     * - fragment dzielimy na pół: [RowMeasure.left] i [RowMeasure.right] to kontrast
+     *   lewej i prawej połowy, [RowMeasure.combined] to kontrast całości (max),
+     * - [RowMeasure.valley] to kontrast najciemniejszego punktu w środku fragmentu
+     *   (szczelina między kreskami); +Inf, gdy fragment jest za wąski, żeby ją zmierzyć,
+     * - jasność kreski = max z lokalnej średniej 3 pikseli,
      * - tło = mediana pikseli tuż poza maską po lewej / prawej, wybieramy ciemniejszą
-     *   stronę (asfalt jest ciemniejszy niż farba, a po drugiej stronie może być
-     *   inna linia).
+     *   stronę.
      * Zwraca null, gdy w tym wierszu nie ma piksela maski przy krzywej.
      */
-    private fun rowContrast(
+    private fun rowMeasure(
         mask: PixelMask,
         frame: Mat,
         channels: Int,
@@ -371,7 +440,7 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         y: Int,
         scaleX: Float,
         scaleY: Float
-    ): Float? {
+    ): RowMeasure? {
         val rowOffset = y * mask.width
         val cxMask = curve.x(curve.normalize(y.toFloat())).roundToInt()
         val searchTol = (mask.width * OCCUPANCY_TOL_RATIO).toInt().coerceAtLeast(2)
@@ -413,16 +482,15 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         frame.get(fy, x0, buf)
         val f = IntArray(len) { feature(buf, it, channels) }
 
-        // jasność kreski
-        var lineValue = 0f
-        val relL = lineL - x0
-        val relR = lineR - x0
-        for (i in relL..relR) {
+        fun avg3(i: Int): Float {
             val a = f[(i - 1).coerceAtLeast(0)]
             val b = f[i]
             val c = f[(i + 1).coerceAtMost(len - 1)]
-            lineValue = max(lineValue, (a + b + c) / 3f)
+            return (a + b + c) / 3f
         }
+
+        val relL = lineL - x0
+        val relR = lineR - x0
 
         // jasność tła (ciemniejsza strona)
         var background = Float.MAX_VALUE
@@ -432,7 +500,36 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         if (rightStart <= len - 1) background = min(background, median(f, rightStart, len - 1))
         if (background == Float.MAX_VALUE) return null
 
-        return lineValue - background
+        val lineWidth = relR - relL + 1
+
+        // za wąski fragment, żeby rozdzielić połowy: traktujemy jak pojedynczą linię
+        if (lineWidth < MIN_DOUBLE_RUN_PX) {
+            var peak = 0f
+            for (i in relL..relR) peak = max(peak, avg3(i))
+            val c = peak - background
+            return RowMeasure(c, c, c, Float.POSITIVE_INFINITY)
+        }
+
+        // dwie połowy fragmentu: [relL, mid) i [mid, relR]
+        val mid = relL + lineWidth / 2
+        var peakL = 0f
+        for (i in relL until mid) peakL = max(peakL, avg3(i))
+        var peakR = 0f
+        for (i in mid..relR) peakR = max(peakR, avg3(i))
+
+        // szczelina: najciemniejszy punkt w środkowej części fragmentu
+        val gapHalf = max(1, lineWidth / 6)
+        val gFrom = max(relL, mid - gapHalf)
+        val gTo = min(relR, mid + gapHalf - 1)
+        var valley = Float.MAX_VALUE
+        for (i in gFrom..gTo) valley = min(valley, avg3(i))
+
+        return RowMeasure(
+            combined = max(peakL, peakR) - background,
+            left = peakL - background,
+            right = peakR - background,
+            valley = valley - background
+        )
     }
 
     /**
@@ -590,15 +687,24 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         return labels
     }
 
+    /**
+     * Dla linii mieszanej piksele po lewej od krzywej dostają typ lewej połowy,
+     * a po prawej typ prawej połowy (CONTINUOUS / DASHED).
+     */
     private fun labelFor(side: SideResult, x: Int, y: Int, tol: Int): Byte {
         val curve = side.curve ?: return ClassifiedLaneMask.UNKNOWN
         val yf = y.toFloat()
         if (yf < side.minY || yf > side.maxY) return ClassifiedLaneMask.UNKNOWN
         val cx = curve.x(curve.normalize(yf))
         if (abs(x - cx) > tol) return ClassifiedLaneMask.UNKNOWN
+        val onLeftHalf = x < cx
         return when (side.model?.type) {
             LineType.CONTINUOUS, LineType.SOLID -> ClassifiedLaneMask.CONTINUOUS
             LineType.DASHED -> ClassifiedLaneMask.DASHED
+            LineType.LEFT_CONTINOUS ->
+                if (onLeftHalf) ClassifiedLaneMask.CONTINUOUS else ClassifiedLaneMask.DASHED
+            LineType.RIGHT_CONTINOUS ->
+                if (onLeftHalf) ClassifiedLaneMask.DASHED else ClassifiedLaneMask.CONTINUOUS
             else -> ClassifiedLaneMask.UNKNOWN
         }
     }
@@ -620,10 +726,20 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         }
     }
 
+    /** Pomiar jednego wiersza (patrz [rowMeasure]). Wszystkie wartości to kontrast względem tła. */
+    private class RowMeasure(
+        val combined: Float,
+        val left: Float,
+        val right: Float,
+        val valley: Float
+    )
+
     /**
      * Wygładzanie w czasie. DASHED jest silnym dowodem (ciągła linia sama nie
-     * wytworzy przerwy), więc wystarczą 2 z 5 klatek. CONTINUOUS wymaga
-     * wyraźnej większości i braku jakiejkolwiek klatki DASHED w oknie.
+     * wytworzy przerwy), więc wystarczą 2 z 5 klatek. Linia mieszana wymaga 3 z 5 klatek
+     * z tą samą orientacją (i przewagi nad przeciwną), bo błędne rozpoznanie szczeliny
+     * w pojedynczej linii nie powinno przełączać wyniku. CONTINUOUS wymaga wyraźnej
+     * większości oraz braku klatek DASHED i mieszanych w oknie.
      * Remis / niepewność -> UNKNOWN.
      */
     private class ClassificationHistory {
@@ -634,9 +750,14 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
             if (values.size > HISTORY_SIZE) values.removeFirst()
             val dashed = values.count { it == LineType.DASHED }
             val continuous = values.count { it == LineType.CONTINUOUS }
+            val leftMixed = values.count { it == LineType.LEFT_CONTINOUS }
+            val rightMixed = values.count { it == LineType.RIGHT_CONTINOUS }
             return when {
+                leftMixed >= MIXED_FRAMES && leftMixed > rightMixed -> LineType.LEFT_CONTINOUS
+                rightMixed >= MIXED_FRAMES && rightMixed > leftMixed -> LineType.RIGHT_CONTINOUS
                 dashed >= DASHED_FRAMES -> LineType.DASHED
-                dashed == 0 && continuous >= CONTINUOUS_FRAMES -> LineType.CONTINUOUS
+                dashed == 0 && leftMixed + rightMixed == 0 && continuous >= CONTINUOUS_FRAMES ->
+                    LineType.CONTINUOUS
                 else -> LineType.UNKNOWN
             }
         }
@@ -683,7 +804,7 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
 
         // Klasyfikacja po kolorze: pomiar kontrastu
         const val OCCUPANCY_TOL_RATIO = 0.012f // jak daleko od krzywej szukamy piksela maski
-        const val MAX_RUN_RATIO = 0.04f        // maks. szerokość linii w masce (ułamek szerokości)
+        const val MAX_RUN_RATIO = 0.06f        // maks. szerokość połowy fragmentu w masce (zwiększone pod linię podwójną)
         const val BG_MARGIN_RATIO = 0.006f     // odstęp tła od krawędzi maski
         const val BG_WIDTH_RATIO = 0.02f       // szerokość próbkowanego pasa tła
         const val MIN_VALID_ROWS_RATIO = 0.7f  // min. odsetek wierszy z danymi
@@ -696,6 +817,12 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         const val CONTINUOUS_MIN_COVERAGE = 0.92f
         const val CONTINUOUS_MIN_SPAN = 0.25f
 
+        // Linia podwójna / mieszana
+        const val MIN_DOUBLE_RUN_PX = 8        // min. szerokość fragmentu w klatce (px), by szukać szczeliny
+        const val DOUBLE_VALLEY_DEPTH = 0.25f  // szczelina musi być ciemniejsza o tyle od słabszej kreski
+        const val MIN_DOUBLE_ROWS = 6          // min. liczba wierszy, w których świecą obie połowy
+        const val DOUBLE_VALLEY_ROWS_RATIO = 0.4f // odsetek takich wierszy, w których widać szczelinę
+
         // Maska etykiet
         const val LABEL_TOL_RATIO = 0.03f
 
@@ -703,6 +830,7 @@ class LaneLineClassifier(private val frameIsBgr: Boolean = false) {
         const val HISTORY_SIZE = 5
         const val DASHED_FRAMES = 2
         const val CONTINUOUS_FRAMES = 4
+        const val MIXED_FRAMES = 3
         const val CROSSWALK_HISTORY_SIZE = 4
         const val CROSSWALK_CONFIRMATIONS = 2
     }

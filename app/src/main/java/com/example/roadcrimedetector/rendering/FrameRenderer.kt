@@ -39,10 +39,12 @@ class FrameRenderer {
                 Imgproc.INTER_NEAREST
             )
             for ((label, color) in listOf(
-                ClassifiedLaneMask.CONTINUOUS to Scalar(0.0, 0.0, 255.0),
-                ClassifiedLaneMask.DASHED to Scalar(0.0, 255.0, 0.0),
-                ClassifiedLaneMask.UNKNOWN to Scalar(255.0, 0.0, 0.0),
-                ClassifiedLaneMask.CROSSING to Scalar(255.0, 0.0, 255.0)
+                ClassifiedLaneMask.CONTINUOUS to Scalar(255.0, 0.0, 0.0), //czerwony
+                ClassifiedLaneMask.DASHED to Scalar(0.0, 255.0, 0.0), //zielony
+                ClassifiedLaneMask.UNKNOWN to Scalar(0.0, 0.0, 255.0), //niebieski
+                ClassifiedLaneMask.CROSSING to Scalar(255.0, 0.0, 255.0), //różowy
+                ClassifiedLaneMask.LEFT_CONTINOUS to Scalar(0.0, 255.0, 255.0), //jasnoniebieski
+                ClassifiedLaneMask.RIGHT_CONTINOUS to Scalar(255.0, 255.0, 255.0) //biały
             )) {
                 Core.compare(resizedLabels, Scalar(label.toDouble()), linePixels, Core.CMP_EQ)
                 mat.setTo(color, linePixels)
